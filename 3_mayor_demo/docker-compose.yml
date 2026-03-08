@@ -1,0 +1,37 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    volumes:
+      # Persistent storage for SQLite database (embedded in this service)
+      - ./data:/app/data
+    environment:
+      - DB_PATH=/app/data/weather.db
+    restart: unless-stopped
+
+  avahi:
+    build:
+      context: ./mdns
+      dockerfile: Dockerfile.avahi
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./mdns/avahi-daemon.conf:/etc/avahi/avahi-daemon.conf
+      - ./mdns/panahon.service:/etc/avahi/services/panahon.service
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+# No named volumes needed for simple bind mounts

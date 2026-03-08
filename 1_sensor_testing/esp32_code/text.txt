@@ -1,0 +1,7 @@
+#define API_KEY "IzaSyBLY_GwHEC8I2YdfPlYt6O_b4CBThnFbpY"
+#define USER_EMAIL "gab@maiii.net"
+#define USER_PASSWORD "GABO1234"
+#define DATABASE_URL "https://maiiinet-default-rtdb.asia-southeast1.firebasedatabase.app"
+
+gab@maiii.net
+GABO1234

@@ -1,0 +1,22 @@
+FROM alpine:latest
+
+# Install avahi and dbus
+RUN apk add --no-cache avahi avahi-tools dbus
+
+# Setup dbus and avahi
+RUN mkdir -p /var/run/dbus && \
+    mkdir -p /var/run/avahi-daemon && \
+    chown avahi:avahi /var/run/avahi-daemon && \
+    mkdir -m 0755 /app
+
+# Create a startup script to handle dbus and avahi
+RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
+    echo 'rm -f /var/run/dbus/pid' >> /app/entrypoint.sh && \
+    echo 'dbus-uuidgen --ensure' >> /app/entrypoint.sh && \
+    echo 'dbus-daemon --system' >> /app/entrypoint.sh && \
+    echo 'exec avahi-daemon --no-drop-root' >> /app/entrypoint.sh && \
+    chmod +x /app/entrypoint.sh
+
+WORKDIR /app
+
+ENTRYPOINT ["/app/entrypoint.sh"]
