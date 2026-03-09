@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from '../i18n/TranslationContext';
 import { Link } from 'react-router-dom';
-import { CloudRain, Droplets, ThermometerSun, Loader2, Settings, ChevronRight, Info } from 'lucide-react';
+import { CloudRain, Droplets, ThermometerSun, Loader2, Settings, ChevronRight, Info, Flame } from 'lucide-react';
 
 interface WeatherData {
     temperature: number;
     humidity: number;
+    heat_index: number;
     rainfall: number;
     timestamp: string;
 }
@@ -155,6 +156,22 @@ export default function PublicView() {
                                         <p className="text-blue-100/80 font-medium text-sm mb-0.5 tracking-wide">{t('temperature')}</p>
                                         <div className="flex items-baseline gap-1">
                                             <p className="text-4xl font-extrabold text-white drop-shadow-sm">{data.temperature.toFixed(1)}</p>
+                                            <span className="text-xl text-blue-200 font-bold">°C</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Heat Index */}
+                            <div className="bg-white/10 backdrop-blur-xl rounded-3xl p-6 shadow-2xl border border-white/20 flex items-center justify-between transform transition-all duration-300 hover:scale-[1.02] hover:bg-white-[0.15]">
+                                <div className="flex items-center gap-5">
+                                    <div className="bg-gradient-to-br from-red-500 to-rose-600 p-4 rounded-2xl shadow-inner shadow-white/20">
+                                        <Flame size={28} className="text-white" strokeWidth={2.5} />
+                                    </div>
+                                    <div className="text-left">
+                                        <p className="text-blue-100/80 font-medium text-sm mb-0.5 tracking-wide">Heat Index</p>
+                                        <div className="flex items-baseline gap-1">
+                                            <p className="text-4xl font-extrabold text-white drop-shadow-sm">{data.heat_index?.toFixed(1) || '--'}</p>
                                             <span className="text-xl text-blue-200 font-bold">°C</span>
                                         </div>
                                     </div>
