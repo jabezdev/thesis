@@ -145,26 +145,26 @@ export default function DashboardView() {
         <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-6 p-6 overflow-hidden">
             {/* Huge Dashboard Blocks for Big Screens */}
             <div className="md:col-span-8 flex flex-col gap-6">
-                <div className="grid grid-cols-2 gap-6 shrink-0">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 shrink-0">
                     <div className="bg-slate-800/80 backdrop-blur-md rounded-3xl border border-slate-700/50 p-6 flex flex-col justify-center items-center shadow-2xl relative overflow-hidden group">
                         <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/10 rounded-full blur-3xl group-hover:bg-orange-500/20 transition-all"></div>
-                        <p className="text-slate-400 font-semibold uppercase tracking-widest text-xs mb-4">Live Temperature</p>
-                        <p className="text-5xl lg:text-7xl font-black text-white drop-shadow-lg">{latest?.temperature ?? '--'}<span className="text-2xl text-slate-500 ml-1">°C</span></p>
+                        <p className="text-slate-400 font-semibold uppercase tracking-widest text-xs mb-4 text-center">Live Temp</p>
+                        <p className="text-4xl lg:text-5xl xl:text-6xl font-black text-white drop-shadow-lg">{latest?.temperature != null ? latest.temperature.toFixed(1) : '--'}<span className="text-xl text-slate-500 ml-1">°C</span></p>
                     </div>
                     <div className="bg-slate-800/80 backdrop-blur-md rounded-3xl border border-slate-700/50 p-6 flex flex-col justify-center items-center shadow-2xl relative overflow-hidden group">
                         <div className="absolute top-0 right-0 w-32 h-32 bg-red-500/10 rounded-full blur-3xl group-hover:bg-red-500/20 transition-all"></div>
-                        <p className="text-slate-400 font-semibold uppercase tracking-widest text-xs mb-4">Heat Index</p>
-                        <p className="text-5xl lg:text-7xl font-black text-white drop-shadow-lg">{latest?.heat_index ?? '--'}<span className="text-2xl text-slate-500 ml-1">°C</span></p>
+                        <p className="text-slate-400 font-semibold uppercase tracking-widest text-xs mb-4 text-center">Heat Index</p>
+                        <p className="text-4xl lg:text-5xl xl:text-6xl font-black text-white drop-shadow-lg">{latest?.heat_index != null ? latest.heat_index.toFixed(1) : '--'}<span className="text-xl text-slate-500 ml-1">°C</span></p>
                     </div>
                     <div className="bg-slate-800/80 backdrop-blur-md rounded-3xl border border-slate-700/50 p-6 flex flex-col justify-center items-center shadow-2xl relative overflow-hidden group">
                         <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-3xl group-hover:bg-blue-500/20 transition-all"></div>
-                        <p className="text-slate-400 font-semibold uppercase tracking-widest text-xs mb-4">Live Humidity</p>
-                        <p className="text-5xl lg:text-7xl font-black text-white drop-shadow-lg">{latest?.humidity ?? '--'}<span className="text-2xl text-slate-500 ml-1">%</span></p>
+                        <p className="text-slate-400 font-semibold uppercase tracking-widest text-xs mb-4 text-center">Humidity</p>
+                        <p className="text-4xl lg:text-5xl xl:text-6xl font-black text-white drop-shadow-lg">{latest?.humidity != null ? latest.humidity.toFixed(1) : '--'}<span className="text-xl text-slate-500 ml-1">%</span></p>
                     </div>
                     <div className="bg-slate-800/80 backdrop-blur-md rounded-3xl border border-slate-700/50 p-6 flex flex-col justify-center items-center shadow-2xl relative overflow-hidden group">
                         <div className="absolute top-0 right-0 w-32 h-32 bg-sky-500/10 rounded-full blur-3xl group-hover:bg-sky-500/20 transition-all"></div>
-                        <p className="text-slate-400 font-semibold uppercase tracking-widest text-xs mb-4">Rainfall (Latest)</p>
-                        <p className="text-5xl lg:text-7xl font-black text-white drop-shadow-lg">{latest?.rainfall ?? '--'}<span className="text-2xl text-slate-500 ml-1">mm</span></p>
+                        <p className="text-slate-400 font-semibold uppercase tracking-widest text-xs mb-4 text-center">Rainfall</p>
+                        <p className="text-4xl lg:text-5xl xl:text-6xl font-black text-white drop-shadow-lg">{latest?.rainfall != null ? latest.rainfall.toFixed(1) : '--'}<span className="text-xl text-slate-500 ml-1">mm</span></p>
                     </div>
                 </div>
 
