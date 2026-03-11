@@ -5,7 +5,61 @@ interface WeatherData {
     humidity: number;
     heat_index: number;
     rainfall: number;
+    timestamp: string;
+}
+
+type IncomingWeatherData = Omit<WeatherData, "timestamp"> & {
     timestamp?: string;
+};
+
+type IncomingWeatherPayload = IncomingWeatherData | {
+    readings: IncomingWeatherData[];
+};
+
+function pad(value: number) {
+    return value.toString().padStart(2, "0");
+}
+
+function makeTimestamp(date = new Date()) {
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function normalizeTimestamp(timestamp?: string) {
+    if (!timestamp) {
+        return makeTimestamp();
+    }
+
+    const trimmed = timestamp.trim();
+    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}$/.test(trimmed)) {
+        return trimmed.replace(" ", "T");
+    }
+
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) {
+        return makeTimestamp(parsed);
+    }
+
+    return makeTimestamp();
+}
+
+function mapReading(row: any): WeatherData | null {
+    if (!row) {
+        return null;
+    }
+
+    return {
+        ...row,
+        timestamp: normalizeTimestamp(String(row.timestamp ?? "")),
+    };
+}
+
+function isValidIncomingReading(reading: IncomingWeatherData) {
+    return (
+        typeof reading.temperature === "number" &&
+        typeof reading.humidity === "number" &&
+        typeof reading.heat_index === "number" &&
+        typeof reading.rainfall === "number"
+    );
 }
 
 let systemMode: 'none' | 'test' | 'demo' = 'none';
@@ -36,23 +90,26 @@ db.run(`
 `);
 
 const insertReading = db.prepare(
-    "INSERT INTO readings (temperature, humidity, heat_index, rainfall) VALUES ($temp, $humidity, $heatIndex, $rainfall)"
+        "INSERT INTO readings (temperature, humidity, heat_index, rainfall, timestamp) VALUES ($temp, $humidity, $heatIndex, $rainfall, $timestamp)"
 );
 
 const getLatestReading = db.prepare(
-    "SELECT * FROM readings ORDER BY timestamp DESC LIMIT 1"
+        "SELECT * FROM readings ORDER BY id DESC LIMIT 1"
 );
 
 // Ensure there's at least one reading for the frontend to clear the loading state
 const initialCheck = getLatestReading.get();
 if (!initialCheck) {
     console.log("🌱 Database empty, inserting initial reading...");
-    db.run("INSERT INTO readings (temperature, humidity, heat_index, rainfall) VALUES (25.0, 60.0, 26.0, 0.0)");
+    db.run(
+        "INSERT INTO readings (temperature, humidity, heat_index, rainfall, timestamp) VALUES (?, ?, ?, ?, ?)",
+        [25.0, 60.0, 26.0, 0.0, makeTimestamp()]
+    );
 }
 
 // Get the last 100 readings for the charts
 const getHistory = db.prepare(
-    "SELECT * FROM readings ORDER BY timestamp DESC LIMIT 100"
+    "SELECT * FROM readings ORDER BY id DESC LIMIT 100"
 );
 
 // Store active SSE connections
@@ -92,6 +149,7 @@ function startGenerator() {
             humidity: Number(humidity.toFixed(1)),
             heat_index: Number(heatIndex.toFixed(1)),
             rainfall: Number(rain.toFixed(1)),
+            timestamp: makeTimestamp(),
         };
 
         if (systemMode === 'demo') {
@@ -101,22 +159,19 @@ function startGenerator() {
                     $humidity: reading.humidity,
                     $heatIndex: reading.heat_index,
                     $rainfall: reading.rainfall,
+                    $timestamp: reading.timestamp,
                 });
-                const latestInfo = getLatestReading.get();
+                const latestInfo = mapReading(getLatestReading.get());
                 broadcast(latestInfo);
             } catch (e) {
                 console.error("Demo generation insert error:", e);
             }
         } else if (systemMode === 'test') {
-            const newReading = {
-                ...reading,
-                timestamp: new Date().toISOString()
-            };
-            testHistory.push(newReading);
+            testHistory.push(reading);
             if (testHistory.length > 100) testHistory.shift();
-            broadcast(newReading);
+            broadcast(reading);
         }
-    }, 3000);
+    }, 1000);
 }
 
 Bun.serve({
@@ -153,7 +208,7 @@ Bun.serve({
                         const latestTest = testHistory[testHistory.length - 1];
                         controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(latestTest)}\n\n`));
                     } else {
-                        const latest = getLatestReading.get();
+                        const latest = mapReading(getLatestReading.get());
                         if (latest) {
                             controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(latest)}\n\n`));
                         }
@@ -195,35 +250,47 @@ Bun.serve({
             console.log(`\n[INCOMING] POST request to /api/weather`);
             try {
                 const rawText = await req.text();
-                console.log(`[RAW PAYLOAD] ${rawText}`);
-                
-                const body = JSON.parse(rawText) as WeatherData;
+                const body = JSON.parse(rawText) as IncomingWeatherPayload;
 
-                // Basic validation
-                if (
-                    typeof body.temperature !== "number" ||
-                    typeof body.humidity !== "number" ||
-                    typeof body.heat_index !== "number" ||
-                    typeof body.rainfall !== "number"
-                ) {
-                    return new Response(JSON.stringify({ error: "Invalid data format" }), { status: 400, headers });
+                const readings = Array.isArray((body as any)?.readings)
+                    ? (body as { readings: IncomingWeatherData[] }).readings
+                    : [body as IncomingWeatherData];
+
+                if (readings.length === 0) {
+                    return new Response(JSON.stringify({ error: "No readings provided" }), { status: 400, headers });
                 }
 
-                insertReading.run({
-                    $temp: body.temperature,
-                    $humidity: body.humidity,
-                    $heatIndex: body.heat_index,
-                    $rainfall: body.rainfall,
-                });
+                for (let i = 0; i < readings.length; i++) {
+                    if (!isValidIncomingReading(readings[i])) {
+                        return new Response(
+                            JSON.stringify({ error: `Invalid data format at index ${i}` }),
+                            { status: 400, headers }
+                        );
+                    }
+                }
 
-                console.log(`[DATA IN] T:${body.temperature}°C, H:${body.humidity}%, HI:${body.heat_index}°C, R:${body.rainfall}mm`);
+                for (const reading of readings) {
+                    const timestamp = normalizeTimestamp(reading.timestamp);
+                    insertReading.run({
+                        $temp: reading.temperature,
+                        $humidity: reading.humidity,
+                        $heatIndex: reading.heat_index,
+                        $rainfall: reading.rainfall,
+                        $timestamp: timestamp,
+                    });
+                }
+
+                const lastReading = readings[readings.length - 1];
+                console.log(
+                    `[DATA IN] inserted ${readings.length} reading(s), latest T:${lastReading.temperature}°C, H:${lastReading.humidity}%, HI:${lastReading.heat_index}°C, R:${lastReading.rainfall}mm`
+                );
 
                 // Get inserted row to ensure timestamp is exact
-                const latestInfo = getLatestReading.get();
+                const latestInfo = mapReading(getLatestReading.get());
                 // Broadcast the real-time event
                 broadcast(latestInfo);
 
-                return new Response(JSON.stringify({ success: true }), { headers });
+                return new Response(JSON.stringify({ success: true, inserted: readings.length }), { headers });
             } catch (e) {
                 console.error("Error inserting data:", e);
                 return new Response(JSON.stringify({ error: "Server error" }), { status: 500, headers });
@@ -231,7 +298,7 @@ Bun.serve({
         }
 
         if (req.method === "GET" && url.pathname === "/api/weather/latest") {
-            const latest = getLatestReading.get() || null;
+            const latest = mapReading(getLatestReading.get());
             return new Response(JSON.stringify(latest), { headers });
         }
 
@@ -260,7 +327,7 @@ Bun.serve({
             }
             const historyItems = getHistory.all() as any[];
             // Reverse to chronological order (oldest to newest)
-            const chronological = historyItems.reverse();
+            const chronological = historyItems.reverse().map((item) => mapReading(item));
             return new Response(JSON.stringify(chronological), { headers });
         }
 

@@ -24,6 +24,53 @@ interface WeatherData {
     rainfall: number;
     timestamp: string;
     time?: string;
+    timestampLabel?: string;
+}
+
+function parseTimestamp(timestamp?: string) {
+    if (!timestamp) {
+        return null;
+    }
+
+    const parsed = new Date(timestamp.replace(' ', 'T'));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatChartTime(timestamp?: string) {
+    const parsed = parseTimestamp(timestamp);
+    if (!parsed) {
+        return '--:--:--';
+    }
+
+    return parsed.toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+}
+
+function formatTimestampLabel(timestamp?: string) {
+    const parsed = parseTimestamp(timestamp);
+    if (!parsed) {
+        return timestamp ?? 'Waiting for timestamp';
+    }
+
+    return parsed.toLocaleString([], {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+}
+
+function decorateReading(reading: WeatherData): WeatherData {
+    return {
+        ...reading,
+        time: formatChartTime(reading.timestamp),
+        timestampLabel: formatTimestampLabel(reading.timestamp)
+    };
 }
 
 export default function DashboardView() {
@@ -52,10 +99,7 @@ export default function DashboardView() {
                 const histRes = await fetch('/api/weather/history');
                 if (histRes.ok) {
                     const histData = await histRes.json();
-                    const formatted = histData.map((d: any) => ({
-                        ...d,
-                        time: new Date(d.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                    }));
+                    const formatted = histData.map((d: WeatherData) => decorateReading(d));
                     setHistory(formatted);
                     setLoading(false);
                 }
@@ -70,9 +114,7 @@ export default function DashboardView() {
         const eventSource = new EventSource('/api/weather/stream');
         eventSource.onmessage = (event) => {
             try {
-                const newData = JSON.parse(event.data);
-                const timeObj = new Date(newData.timestamp || new Date());
-                newData.time = timeObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                const newData = decorateReading(JSON.parse(event.data) as WeatherData);
 
                 setLatest(newData);
                 setHistory(prev => {
@@ -132,6 +174,7 @@ export default function DashboardView() {
     const totalRain = history.length
         ? history.reduce((a: number, b: WeatherData) => a + b.rainfall, 0).toFixed(1)
         : '--';
+    const latestTimestampLabel = latest?.timestampLabel ?? 'Waiting for timestamp';
 
     const alerts: string[] = [];
     if (latest) {
@@ -145,6 +188,16 @@ export default function DashboardView() {
         <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-6 p-6 overflow-hidden">
             {/* Huge Dashboard Blocks for Big Screens */}
             <div className="md:col-span-8 flex flex-col gap-6">
+                <div className="bg-slate-800/80 backdrop-blur-md rounded-3xl border border-slate-700/50 p-5 shadow-2xl flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div>
+                        <p className="text-slate-400 font-semibold uppercase tracking-widest text-xs">Latest Sensor Timestamp</p>
+                        <p className="text-2xl font-black text-white">{latestTimestampLabel}</p>
+                    </div>
+                    <div className="text-sm text-slate-400 font-semibold uppercase tracking-widest">
+                        Target cadence: 1 sample / second
+                    </div>
+                </div>
+
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 shrink-0">
                     <div className="bg-slate-800/80 backdrop-blur-md rounded-3xl border border-slate-700/50 p-6 flex flex-col justify-center items-center shadow-2xl relative overflow-hidden group">
                         <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/10 rounded-full blur-3xl group-hover:bg-orange-500/20 transition-all"></div>
@@ -445,7 +498,7 @@ export default function DashboardView() {
                                         </div>
                                     </div>
                                     <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
-                                        <span className="text-[9px] text-slate-400 font-bold italic">Last sync: {latest?.time ?? 'Live'}</span>
+                                        <span className="text-[9px] text-slate-400 font-bold italic">Captured: {latest?.timestampLabel ?? 'Live'}</span>
                                         <SignalHigh size={12} className="text-blue-500" />
                                     </div>
                                 </div>
@@ -487,7 +540,7 @@ export default function DashboardView() {
                                                 </div>
                                             </div>
                                             <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
-                                                <span className="text-[9px] text-slate-400 font-bold italic">Last sync: {latest?.time ?? 'Live'}</span>
+                                                <span className="text-[9px] text-slate-400 font-bold italic">Captured: {latest?.timestampLabel ?? 'Live'}</span>
                                                 <SignalHigh size={12} className="text-blue-500" />
                                             </div>
                                         </div>

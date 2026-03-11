@@ -11,11 +11,35 @@ interface WeatherData {
     timestamp: string;
 }
 
+function parseTimestamp(timestamp?: string) {
+    if (!timestamp) {
+        return null;
+    }
+
+    const parsed = new Date(timestamp.replace(' ', 'T'));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatTimestamp(timestamp?: string) {
+    const parsed = parseTimestamp(timestamp);
+    if (!parsed) {
+        return timestamp ?? '--';
+    }
+
+    return parsed.toLocaleString([], {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+}
+
 export default function PublicView() {
     const { t, language, setLanguage } = useTranslation();
     const [data, setData] = useState<WeatherData | null>(null);
     const [loading, setLoading] = useState(true);
-    const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
     const [showSettings, setShowSettings] = useState(false);
 
     useEffect(() => {
@@ -26,7 +50,6 @@ export default function PublicView() {
                     const latestData = await res.json();
                     if (latestData) {
                         setData(latestData);
-                        setLastUpdated(new Date());
                         setLoading(false);
                     }
                 }
@@ -43,7 +66,6 @@ export default function PublicView() {
             try {
                 const newData = JSON.parse(event.data);
                 setData(newData);
-                setLastUpdated(new Date());
                 setLoading(false);
             } catch (err) {
                 console.error("Error parsing SSE data", err);
@@ -70,9 +92,7 @@ export default function PublicView() {
         return "Weather looks fair. Enjoy your day!";
     };
 
-    const timeString = lastUpdated
-        ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-        : '--:--';
+    const sensorTimestamp = formatTimestamp(data?.timestamp);
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex flex-col items-center pt-8 pb-12 px-5 selection:bg-blue-300 font-sans text-slate-100 overflow-hidden relative">
@@ -131,6 +151,11 @@ export default function PublicView() {
                     <p className="text-sm text-blue-100 leading-relaxed font-medium">
                         {getTip()}
                     </p>
+                </div>
+
+                <div className="mb-8 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl p-4 shadow-lg">
+                    <p className="text-[11px] text-blue-200/70 font-semibold uppercase tracking-[0.25em] mb-2">Sensor Timestamp</p>
+                    <p className="text-lg font-bold text-white tracking-wide">{sensorTimestamp}</p>
                 </div>
 
                 {/* Weather Cards */}
@@ -221,7 +246,7 @@ export default function PublicView() {
                         ) : (
                             <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
                         )}
-                        <span className="uppercase tracking-widest">{t('last_updated')}: {timeString}</span>
+                        <span className="uppercase tracking-widest">{t('last_updated')}: {sensorTimestamp}</span>
                     </div>
 
                     <Link
