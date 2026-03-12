@@ -8,5 +8,9 @@
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "dependencies": {
+    "@serialport/bindings-cpp": "^13.0.1",
+    "serialport": "^13.0.0"
   }
 }

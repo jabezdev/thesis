@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from '../i18n/TranslationContext';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, LayoutDashboard, Map as MapIcon, BarChart3, AlertTriangle, Loader2, SignalHigh, CloudRain, Battery, Activity, Settings } from 'lucide-react';
+import { ArrowLeft, LayoutDashboard, Map as MapIcon, BarChart3, AlertTriangle, Loader2, SignalHigh, CloudRain, Battery, Activity, Settings, Usb, RefreshCw, Unplug, Plug } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, CircleMarker } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -34,6 +34,13 @@ export default function DashboardView() {
     const [activeTab, setActiveTab] = useState<'overview' | 'map' | 'analytics'>('overview');
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [mode, setMode] = useState<'none' | 'test' | 'demo'>('none');
+
+    // Serial port state
+    const [availablePorts, setAvailablePorts] = useState<{ path: string; manufacturer?: string }[]>([]);
+    const [selectedPort, setSelectedPort] = useState('');
+    const [serialStatus, setSerialStatus] = useState<'disconnected' | 'connected' | 'error'>('disconnected');
+    const [connectedPortPath, setConnectedPortPath] = useState('');
+    const [serialLoading, setSerialLoading] = useState(false);
 
     // New Bacolor pin: 14°59'51.2"N 120°39'04.4"E -> 14.997555, 120.651222
     const activePosition: [number, number] = [14.997555, 120.651222];
@@ -106,10 +113,29 @@ export default function DashboardView() {
             }
         });
 
-        // Initialize mode
+        // Listen for serial port status updates from server
+        eventSource.addEventListener('serial', (event: any) => {
+            try {
+                const s = JSON.parse(event.data) as { status: 'disconnected' | 'connected' | 'error'; port: string };
+                setSerialStatus(s.status);
+                setConnectedPortPath(s.port || '');
+            } catch (err) {
+                console.error("Error parsing serial SSE data", err);
+            }
+        });
+
+        // Initialize mode & serial status
         fetch('/api/system/mode').then(res => res.json()).then(data => {
             if (data && data.mode) setMode(data.mode);
         }).catch(err => console.error("Failed to fetch initial mode", err));
+
+        fetch('/api/serial/status').then(res => res.json()).then(data => {
+            if (data) {
+                setSerialStatus(data.status);
+                setConnectedPortPath(data.port || '');
+                if (data.port) setSelectedPort(data.port);
+            }
+        }).catch(() => {});
 
         return () => eventSource.close();
     }, []);
@@ -124,6 +150,49 @@ export default function DashboardView() {
             });
         } catch (e) {
             console.error("Failed to update system mode", e);
+        }
+    };
+
+    const refreshPorts = async () => {
+        try {
+            const res = await fetch('/api/serial/ports');
+            const data = await res.json();
+            setAvailablePorts(data);
+            if (data.length > 0 && !selectedPort) setSelectedPort(data[0].path);
+        } catch (e) {
+            console.error("Failed to fetch COM ports", e);
+        }
+    };
+
+    const handleSerialConnect = async () => {
+        if (!selectedPort) return;
+        setSerialLoading(true);
+        try {
+            const res = await fetch('/api/serial/connect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ port: selectedPort })
+            });
+            const data = await res.json();
+            setSerialStatus(data.status);
+            setConnectedPortPath(data.port || '');
+        } catch (e) {
+            console.error("Failed to connect serial port", e);
+        } finally {
+            setSerialLoading(false);
+        }
+    };
+
+    const handleSerialDisconnect = async () => {
+        setSerialLoading(true);
+        try {
+            await fetch('/api/serial/disconnect', { method: 'POST' });
+            setSerialStatus('disconnected');
+            setConnectedPortPath('');
+        } catch (e) {
+            console.error("Failed to disconnect serial port", e);
+        } finally {
+            setSerialLoading(false);
         }
     };
 
@@ -679,10 +748,10 @@ export default function DashboardView() {
                         </button>
 
                         {settingsOpen && (
-                            <div className="absolute top-full right-0 mt-4 w-64 bg-slate-900/95 backdrop-blur-xl border border-slate-700/50 rounded-2xl shadow-2xl p-4 z-50 overflow-hidden">
-                                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Simulation Mode</h3>
-
-                                <div className="space-y-2">
+                            <div className="absolute top-full right-0 mt-4 w-72 bg-slate-900/95 backdrop-blur-xl border border-slate-700/50 rounded-2xl shadow-2xl p-4 z-50 overflow-hidden">
+                                {/* ── Simulation Mode ── */}
+                                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Simulation Mode</h3>
+                                <div className="space-y-2 mb-5">
                                     <button
                                         onClick={() => handleModeChange('none')}
                                         className={`w-full flex items-center justify-between p-3 rounded-xl transition-all ${mode === 'none' ? 'bg-blue-500/20 border border-blue-500/50 text-blue-400' : 'bg-slate-800/50 text-slate-400 hover:bg-slate-800 hover:text-white border border-transparent'}`}
@@ -710,6 +779,85 @@ export default function DashboardView() {
                                         </div>
                                         {mode === 'demo' && <div className="w-2 h-2 rounded-full bg-orange-500 animate-pulse"></div>}
                                     </button>
+                                </div>
+
+                                {/* ── Serial / COM Port ── */}
+                                <div className="border-t border-slate-700/50 pt-4">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <div className="flex items-center gap-2">
+                                            <Usb size={12} className="text-slate-400" />
+                                            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ESP Serial (COM)</h3>
+                                        </div>
+                                        <button
+                                            onClick={refreshPorts}
+                                            title="Refresh COM ports"
+                                            className="p-1 rounded-lg text-slate-500 hover:text-white hover:bg-slate-700 transition-all"
+                                        >
+                                            <RefreshCw size={11} />
+                                        </button>
+                                    </div>
+
+                                    {/* Status badge */}
+                                    <div className={`flex items-center gap-2 px-3 py-2 rounded-xl mb-3 border text-[11px] font-bold ${
+                                        serialStatus === 'connected'
+                                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                                            : serialStatus === 'error'
+                                            ? 'bg-red-500/10 border-red-500/30 text-red-400'
+                                            : 'bg-slate-800/50 border-slate-700/50 text-slate-500'
+                                    }`}>
+                                        <div className={`w-1.5 h-1.5 rounded-full ${
+                                            serialStatus === 'connected' ? 'bg-emerald-500 animate-pulse' :
+                                            serialStatus === 'error' ? 'bg-red-500' : 'bg-slate-600'
+                                        }`} />
+                                        {serialStatus === 'connected'
+                                            ? `Connected · ${connectedPortPath}`
+                                            : serialStatus === 'error'
+                                            ? 'Connection Error'
+                                            : 'Disconnected'}
+                                    </div>
+
+                                    {availablePorts.length === 0 ? (
+                                        <button
+                                            onClick={refreshPorts}
+                                            className="w-full py-2 text-[10px] font-bold text-slate-500 hover:text-white bg-slate-800/50 hover:bg-slate-700 rounded-xl transition-all border border-slate-700/50 uppercase tracking-widest"
+                                        >
+                                            Scan for ports
+                                        </button>
+                                    ) : (
+                                        <>
+                                            <select
+                                                value={selectedPort}
+                                                onChange={e => setSelectedPort(e.target.value)}
+                                                className="w-full bg-slate-800 border border-slate-700 text-white text-xs font-medium rounded-xl px-3 py-2 mb-2 focus:outline-none focus:border-blue-500/70"
+                                            >
+                                                {availablePorts.map(p => (
+                                                    <option key={p.path} value={p.path}>
+                                                        {p.path}{p.manufacturer ? ` — ${p.manufacturer.slice(0, 22)}` : ''}
+                                                    </option>
+                                                ))}
+                                            </select>
+
+                                            {serialStatus === 'connected' ? (
+                                                <button
+                                                    onClick={handleSerialDisconnect}
+                                                    disabled={serialLoading}
+                                                    className="w-full flex items-center justify-center gap-2 py-2 text-[11px] font-black uppercase tracking-widest bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl transition-all disabled:opacity-50"
+                                                >
+                                                    {serialLoading ? <Loader2 size={12} className="animate-spin" /> : <Unplug size={12} />}
+                                                    Disconnect
+                                                </button>
+                                            ) : (
+                                                <button
+                                                    onClick={handleSerialConnect}
+                                                    disabled={serialLoading || !selectedPort}
+                                                    className="w-full flex items-center justify-center gap-2 py-2 text-[11px] font-black uppercase tracking-widest bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-lg shadow-blue-600/20 disabled:opacity-50"
+                                                >
+                                                    {serialLoading ? <Loader2 size={12} className="animate-spin" /> : <Plug size={12} />}
+                                                    Connect
+                                                </button>
+                                            )}
+                                        </>
+                                    )}
                                 </div>
                             </div>
                         )}

@@ -1,17 +1,9 @@
 #include <Wire.h>
 #include <SPI.h>
 #include <SD.h>
-#include <WiFi.h>
-#include <HTTPClient.h>
 #include <ModbusMaster.h>
 #include "RTClib.h"
 #include "DFRobot_RainfallSensor.h"
-
-/* ================= CONFIG ================= */
-const char* WIFI_SSID = "onsay";
-const char* WIFI_PASS = "11112222";
-// Endpoint expects port 3001 and /api/weather. IP is standard local assignment, update if needed.
-const char* SERVER_URL = "http://192.168.99.101:3001/api/weather"; 
 
 /* ================= HARDWARE ================= */
 RTC_DS3231 rtc;
@@ -34,8 +26,6 @@ DFRobot_RainfallSensor_UART RainSensor(&RainSerial);
 /* ================= COUNTERS ================= */
 uint32_t failSensor = 0;
 uint32_t failSD = 0;
-uint32_t failUpload = 0;
-int uploadCounter = 0;
 
 /* ================= UTILS ================= */
 float heatIndex(float tempC, float humidity) {
@@ -84,38 +74,39 @@ void setup() {
   SPI.begin(18, 19, 23, SD_CS);
   SD.begin(SD_CS);
 
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  while (WiFi.status() != WL_CONNECTED) delay(500);
-
   Serial.println("System Ready");
 }
 
-void checkSerialForRTCUpdate() {
+/* 
+ * Checks if the backend sent a command over USB Serial.
+ * Currently supports RTC sync: expects "YYYY-MM-DD HH:MM:SS" (length 19).
+ */
+void checkSerialForCommands() {
   if (!Serial.available()) return;
 
   String s = Serial.readStringUntil('\n');
   s.trim();
 
-  // Expected: YYYY-MM-DD HH:MM:SS  (length = 19)
-  if (s.length() != 19) {
-    Serial.println("Invalid format. Use: YYYY-MM-DD HH:MM:SS");
+  // RTC update command: YYYY-MM-DD HH:MM:SS  (length = 19)
+  if (s.length() == 19) {
+    int yr = s.substring(0,4).toInt();
+    int mo = s.substring(5,7).toInt();
+    int dy = s.substring(8,10).toInt();
+    int hr = s.substring(11,13).toInt();
+    int mi = s.substring(14,16).toInt();
+    int se = s.substring(17,19).toInt();
+
+    rtc.adjust(DateTime(yr, mo, dy, hr, mi, se));
+    Serial.println("{\"rtc\":\"updated\"}");
     return;
   }
 
-  int yr = s.substring(0,4).toInt();
-  int mo = s.substring(5,7).toInt();
-  int dy = s.substring(8,10).toInt();
-  int hr = s.substring(11,13).toInt();
-  int mi = s.substring(14,16).toInt();
-  int se = s.substring(17,19).toInt();
-
-  rtc.adjust(DateTime(yr, mo, dy, hr, mi, se));
-  Serial.println("RTC updated successfully.");
+  Serial.println("{\"error\":\"unknown command\"}");
 }
 
 /* ================= LOOP ================= */
 void loop() {
-  checkSerialForRTCUpdate();
+  checkSerialForCommands();
   static int lastSecond = -1;
   DateTime now = rtc.now();
 
@@ -129,7 +120,6 @@ void loop() {
     h = node.getResponseBuffer(0)/10.0;
     t = node.getResponseBuffer(1)/10.0;
   } else {
-    Serial.printf("Sensor Read Failed (Modbus Error: %02X)\n", result);
     failSensor++;
   }
 
@@ -150,43 +140,13 @@ void loop() {
     failSD++;
   }
 
-  /* -------- PRINT GROUP -------- */
-  Serial.printf("%s | T:%.2f H:%.2f HI:%.2f Rain:%.2f\n",
-                ts.c_str(), t, h, hi, rain);
-
-  /* -------- UPLOAD CONTINUOUSLY -------- */
-  if(WiFi.status() == WL_CONNECTED) {
-    Serial.println("---- UPLOADING JSON ----");
-
-      HTTPClient http;
-      http.begin(SERVER_URL);
-      http.addHeader("Content-Type","application/json");
-
-      // Construct native JSON mapping to Backend's Expected Body 
-      // Requirement: { temperature: number, humidity: number, heat_index: number, rainfall: number }
-      String payload = "{";
-      payload += "\"temperature\":" + String(t) + ",";
-      payload += "\"humidity\":" + String(h) + ",";
-      payload += "\"heat_index\":" + String(hi) + ",";
-      payload += "\"rainfall\":" + String(rain);
-      payload += "}";
-
-      Serial.print("Payload to send: ");
-      Serial.println(payload);
-
-      int code = http.POST(payload);
-      if (code == 200) {
-        Serial.println("Upload Success: Server responded with HTTP 200");
-      } else {
-        Serial.printf("Upload Failed: HTTP %d\n", code);
-        String response = http.getString();
-        Serial.print("Server Response: ");
-        Serial.println(response);
-        failUpload++;
-      }
-
-      http.end();
-    } else {
-      Serial.println("WiFi disconnected, skipping upload!");
-    }
+  /* -------- SEND JSON OVER USB SERIAL (to backend via COM port) -------- */
+  // One compact JSON line per second — backend reads and inserts into DB
+  Serial.print("{");
+  Serial.print("\"temperature\":");   Serial.print(t, 2);
+  Serial.print(",\"humidity\":");     Serial.print(h, 2);
+  Serial.print(",\"heat_index\":");   Serial.print(hi, 2);
+  Serial.print(",\"rainfall\":");     Serial.print(rain, 2);
+  Serial.print(",\"timestamp\":\"");  Serial.print(ts);
+  Serial.println("\"}");
 }
