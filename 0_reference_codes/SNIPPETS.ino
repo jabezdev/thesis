@@ -54,9 +54,10 @@ const char* BATCH_URL   = "http://<SERVER_IP>:<PORT>/upload";
 // SD card (SPI)
 #define SD_CS    5
 
-// WiFi power switch via MOSFET (CODE_2)
-// Connect MOSFET gate to this pin to cut WiFi module power during sleep
-#define WIFI_POWER_PIN 13
+// WiFi dongle power switch via IRFz44n MOSFET (CODE_2)
+// Gate HIGH = dongle powered ON, LOW = dongle powered OFF
+#define WIFI_POWER_PIN      13
+#define WIFI_DONGLE_BOOT_MS 6000  // ms to wait after gate HIGH for dongle to join hotspot
 
 // INA219 uses I2C — default ESP32 I2C pins
 // Wire.begin(21, 22);   ← call this in setup() if not using default Wire pins
@@ -110,6 +111,11 @@ uint32_t failSensor  = 0;   // Modbus read failures
 uint32_t failSD      = 0;   // SD write failures
 uint32_t failUpload  = 0;   // HTTP POST failures
 int      uploadCounter = 0; // Total successful uploads
+
+// MOSFET dongle power state (FreeRTOS pattern — see Section 14)
+// uploadTask sets true before powering on, false after powering off.
+// Other tasks (heartbeat etc.) gate on this flag.
+volatile bool g_dongle_on = false;
 
 
 /* =============================================================================
@@ -254,10 +260,13 @@ void initINA219() {
   Serial.println("INA219 OK");
 }
 
-// WiFi MOSFET power control (CODE_2)
+// WiFi MOSFET power control (CODE_2 / reliability_test)
+// Call once in setup() to configure the pin and power the dongle on at boot.
 void initWiFiPowerPin() {
   pinMode(WIFI_POWER_PIN, OUTPUT);
   digitalWrite(WIFI_POWER_PIN, HIGH);  // HIGH = WiFi module powered ON
+  g_dongle_on = true;
+  delay(WIFI_DONGLE_BOOT_MS);          // wait for dongle to register on hotspot
 }
 
 
@@ -445,3 +454,82 @@ void loop() {
   // --- Battery monitoring (non-blocking) ---
   readINA219();
 }
+
+
+/* =============================================================================
+   SECTION 14: MOSFET WiFi DONGLE POWER CONTROL
+
+   Hardware:
+     - IRFz44n N-channel MOSFET
+     - MOSFET source  → GND
+     - MOSFET drain   → dongle GND rail  (low-side switch)
+     - MOSFET gate    → GPIO 13 via 10kΩ resistor; 10kΩ pulldown to GND
+     - Add 1N4007 flyback diode across drain-source if the dongle load is
+       inductive (USB cable capacitance is usually sufficient for LTE dongles)
+
+   Note on gate drive:
+     The IRFz44n threshold is 2–4 V; it *works* at 3.3 V but doesn't fully
+     saturate. For heavy loads use the logic-level variant IRLZ44N, or drive
+     the gate via a 2N2222 NPN transistor referenced to 5 V.
+
+   Usage pattern (FreeRTOS / reliability_test style):
+     uploadTask powers the dongle ON, waits for boot, connects, uploads,
+     waits for heartbeatTask to complete (15 s grace window), then powers OFF.
+     g_dongle_on is the shared flag that prevents other tasks from touching
+     the network while the dongle is physically off.
+   ============================================================================= */
+
+// ---- Low-level helpers ----
+
+// Power the LTE dongle ON via the MOSFET gate.
+// Always follow with delay(WIFI_DONGLE_BOOT_MS) before calling connectWiFi().
+void wifiDongleOn() {
+  digitalWrite(WIFI_POWER_PIN, HIGH);
+  g_dongle_on = true;
+  Serial.println("[WiFi] Dongle powered ON.");
+}
+
+// Tear down the WiFi stack, then cut MOSFET gate to power the dongle OFF.
+void wifiDongleOff() {
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  delay(100);                          // let stack settle before cutting power
+  digitalWrite(WIFI_POWER_PIN, LOW);
+  g_dongle_on = false;
+  Serial.println("[WiFi] Dongle powered OFF (power save).");
+}
+
+// ---- FreeRTOS uploadTask skeleton (power-cycling variant) ----
+// Replace the plain uploadTask with this pattern in reliability_test.ino.
+//
+// Power budget per 60-second cycle (approximate):
+//   Dongle ON window : ~26 s  (6 s boot + connect/upload/heartbeat~20 s)
+//   Dongle OFF window: ~34 s  → ~57% duty cycle reduction on dongle current
+//
+// void uploadTask(void* pvParams) {
+//   vTaskDelay(pdMS_TO_TICKS(5000));         // head start for sensorTask
+//   while (true) {
+//     esp_task_wdt_reset();
+//
+//     // 1. Power ON + boot wait
+//     wifiDongleOn();
+//     vTaskDelay(pdMS_TO_TICKS(WIFI_DONGLE_BOOT_MS));
+//     esp_task_wdt_reset();
+//
+//     // 2. Connect + upload
+//     if (connectWiFi()) {
+//       flushPending();
+//       uploadReading(snap);
+//
+//       // 3. Grace window for heartbeatTask (staggered 15 s)
+//       vTaskDelay(pdMS_TO_TICKS(20000));
+//       esp_task_wdt_reset();
+//     }
+//
+//     // 4. Power OFF + sleep remainder of interval
+//     wifiDongleOff();
+//     const uint32_t sleepMs = (UPLOAD_INTERVAL_S * 1000)
+//                              - WIFI_DONGLE_BOOT_MS - 20000;
+//     vTaskDelay(pdMS_TO_TICKS(sleepMs > 1000 ? sleepMs : 1000));
+//   }
+// }
