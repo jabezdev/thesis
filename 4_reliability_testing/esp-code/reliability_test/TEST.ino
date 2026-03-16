@@ -20,9 +20,6 @@
 #include <freertos/task.h>
 #include <freertos/semphr.h>
 #include <Preferences.h>      // NVS — persistent boot_count across reboots
-#include <ArduinoJson.h>      // For robust JSON serialization
-#include <esp_exception.h>    // For backtrace handling
-#include <rom/rtc.h>          // For rtc_get_reset_reason
 
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -161,22 +158,6 @@ struct SensorReading {
   uint32_t  sensor_stack_hwm;           // sensorTask stack words remaining
   uint32_t  upload_stack_hwm;           // uploadTask stack words remaining
   uint32_t  sd_used_mb;                 // SD card used space MB
-
-  // ── NEW PROGNOSTICS ─────────────────────────────────────────
-  uint32_t loop_jitter_max_ms;         // worst sensorTask delay
-  uint32_t brownout_count;             // total brownout resets in life
-  bool     has_crash_log;              // true if /crashlog.txt exists
-  uint32_t i2c_error_count;            // total I2C NACKs/timeouts
-  uint32_t sd_max_write_latency_ms;    // session peak SD latency
-  float    batt_internal_resistance;   // calculated mΩ
-  uint32_t modbus_timeout_count;       // specific modbus error category
-  uint32_t modbus_crc_error_count;     // specific modbus error category
-  uint32_t http_2xx_count;
-  uint32_t http_4xx_count;
-  uint32_t http_5xx_count;
-  float    net_throughput_kbps;        // kbps during active windows
-  int32_t  ntp_drift_s;                // last RTC vs NTP delta
-  uint32_t current_upload_interval_s;  // active UPLOAD_INTERVAL_S
 };
 
 SensorReading     g_reading;
@@ -219,28 +200,10 @@ volatile uint32_t g_wifi_offline_total_s      = 0;
 volatile uint32_t g_longest_offline_streak_s  = 0;
 volatile uint32_t g_current_offline_s         = 0;  // live streak acc.
 volatile uint32_t g_dongle_power_cycles       = 0;
-
-// New Prognostic Globals
-volatile uint32_t g_loop_jitter_max_ms       = 0;
-uint32_t g_brownout_count                    = 0;
-volatile uint32_t g_i2c_error_count          = 0;
-volatile uint32_t g_sd_max_write_latency_ms  = 0;
-float    g_batt_internal_resistance          = 0;
-volatile uint32_t g_modbus_timeout_count     = 0;
-volatile uint32_t g_modbus_crc_error_count   = 0;
-volatile uint32_t g_http_2xx_count           = 0;
-volatile uint32_t g_http_4xx_count           = 0;
-volatile uint32_t g_http_5xx_count           = 0;
-uint32_t g_total_bytes_sent                  = 0;
-uint32_t g_radio_on_duration_ms              = 0;
-int32_t  g_ntp_drift_s                       = 0;
-uint32_t g_current_upload_interval_s         = UPLOAD_INTERVAL_S;
-
 uint32_t g_avg_upload_latency_ms  = 0;
 uint32_t g_upload_latency_count   = 0;
 uint32_t g_sd_write_latency_ms    = 0;
 uint32_t g_pending_row_count      = 0;
-uint32_t g_radio_start_ms         = 0; // Fixed: missing variable
 
 // Task handles (for cross-task stack HWM queries)
 TaskHandle_t g_sensorTaskHandle  = NULL;
@@ -250,9 +213,6 @@ TaskHandle_t g_uploadTaskHandle  = NULL;
 // uploadTask sets true before powering on and false after powering off;
 // heartbeatTask gates on this so it only fires inside the active window.
 volatile bool g_dongle_on = false;
-SemaphoreHandle_t g_i2c_mutex;
-volatile float g_v_pre_load = 0;
-volatile bool  g_capture_ir = false;
 
 
 // ── Rain Interrupt State (DISABLED — kept for future) ─────────────────────────
@@ -294,16 +254,9 @@ void syncRTCWithNTP() {
   configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
   struct tm timeinfo;
   if (getLocalTime(&timeinfo)) {
-    uint32_t rtc_before = rtc.now().unixtime();
-    
     rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
                         timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
-    
-    uint32_t ntp_now = rtc.now().unixtime(); // After adjustment, RTC matches NTP
-    g_ntp_drift_s = (int32_t)ntp_now - (int32_t)rtc_before;
-    
-    if (abs(g_ntp_drift_s) > 3600) g_ntp_drift_s = 0; // Ignore large jumps
-    Serial.printf("[RTC] Synced. Drift: %ld s\n", (long)g_ntp_drift_s);
+    Serial.println("[RTC] Synced with NTP.");
   }
 }
 
@@ -340,17 +293,10 @@ void checkSerialRTCUpdate() {
 // Always pair wifiDongleOn() with a later wifiDongleOff() to avoid leaving the
 // dongle unpowered unintentionally (e.g. across unexpected reboots).
 inline void wifiDongleOn() {
-  if (g_i2c_mutex != NULL && xSemaphoreTake(g_i2c_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-    g_v_pre_load = ina219_batt.getBusVoltage_V();
-    xSemaphoreGive(g_i2c_mutex);
-  }
   digitalWrite(WIFI_POWER_PIN, HIGH);
   g_dongle_on = true;
-  g_radio_start_ms = millis(); // Track start time
-  g_capture_ir = true; // Trigger sensorTask to calc IR next second
   g_dongle_power_cycles++;
-  Serial.printf("[WiFi] Dongle ON (cycle #%lu, V_pre: %.2fV).\n", 
-                (unsigned long)g_dongle_power_cycles, g_v_pre_load);
+  Serial.printf("[WiFi] Dongle powered ON (cycle #%lu).\n", (unsigned long)g_dongle_power_cycles);
 }
 
 inline void wifiDongleOff() {
@@ -409,106 +355,185 @@ String firestoreUrl(const char* collection, const char* docId) {
 }
 
 // Helpers: append Firestore typed fields
-// Firestore helper removed — using ArduinoJson lambda instead
+void fsDouble(String& s, const char* name, float v, bool comma = true) {
+  s += String('"') + name + "\":{\"doubleValue\":" + String(v, 4) + "}";
+  if (comma) s += ',';
+}
+void fsInt(String& s, const char* name, long v, bool comma = true) {
+  s += String('"') + name + "\":{\"integerValue\":" + String(v) + "}";
+  if (comma) s += ',';
+}
+void fsStr(String& s, const char* name, const char* v, bool comma = true) {
+  s += String('"') + name + "\":{\"stringValue\":\"" + String(v) + "\"}";
+  if (comma) s += ',';
+}
+void fsBool(String& s, const char* name, bool v, bool comma = true) {
+  s += String('"') + name + "\":{\"booleanValue\":" + (v ? "true" : "false") + "}";
+  if (comma) s += ',';
+}
 
 // ── Upload full reading → Firestore: readings/{STATION_ID} ───────────────────
 bool uploadReading(const SensorReading& r) {
-  WiFiClientSecure client; client.setInsecure();
+  WiFiClientSecure client;
+  client.setInsecure();
+
   HTTPClient http;
-  http.begin(client, firestoreUrl("readings", STATION_ID));
+  String url = firestoreUrl("readings", STATION_ID);
+  http.begin(client, url);
   http.addHeader("Content-Type", "application/json");
 
-  JsonDocument doc;
-  JsonObject fields = doc["fields"].to<JsonObject>();
+  String p = "{\"fields\":{";
 
-  auto fsVal = [&](const char* k, auto v, const char* type) {
-    if (strcmp(type, "double") == 0) fields[k]["doubleValue"] = v;
-    else if (strcmp(type, "int") == 0) fields[k]["integerValue"] = String(v);
-    else if (strcmp(type, "str") == 0) fields[k]["stringValue"] = String(v);
-    else if (strcmp(type, "bool") == 0) fields[k]["booleanValue"] = v;
-  };
+  // Environmental
+  fsStr(p,    "timestamp",                r.timestamp);
+  fsDouble(p, "temperature",              r.temperature);
+  fsDouble(p, "humidity",                 r.humidity);
+  fsDouble(p, "rainfall_mm",              r.rainfall_mm);
+  fsDouble(p, "rainfall_1h_mm",           r.rainfall_1h_mm);
+  fsInt(p,    "rain_raw",                 (long)r.rain_raw);
 
-  fsVal("timestamp", r.timestamp, "str");
-  fsVal("temperature", r.temperature, "double");
-  fsVal("humidity", r.humidity, "double");
-  fsVal("rainfall_mm", r.rainfall_mm, "double");      // Added
-  fsVal("rainfall_1h_mm", r.rainfall_1h_mm, "double"); // Added
-  fsVal("rain_raw", (long)r.rain_raw, "int");         // Added
-  fsVal("batt_voltage", r.batt_voltage, "double");
-  fsVal("batt_current_A", r.batt_current_A, "double");
-  fsVal("batt_soc_pct", r.batt_soc_pct, "double");
-  fsVal("batt_internal_resistance", r.batt_internal_resistance, "double");
-  fsVal("loop_jitter_max_ms", r.loop_jitter_max_ms, "int");
-  fsVal("brownout_count", r.brownout_count, "int");
-  fsVal("i2c_error_count", r.i2c_error_count, "int");
-  fsVal("modbus_timeout_count", r.modbus_timeout_count, "int");
-  fsVal("modbus_crc_error_count", r.modbus_crc_error_count, "int");
-  fsVal("http_2xx", g_http_2xx_count, "int");
-  fsVal("http_4xx", g_http_4xx_count, "int");
-  fsVal("http_5xx", g_http_5xx_count, "int");
-  fsVal("ntp_drift_s", g_ntp_drift_s, "int");
-  fsVal("uptime_h", r.uptime_h, "double");
-  fsVal("reset_reason", r.reset_reason.c_str(), "str");
-  fsVal("boot_count", r.boot_count, "int");
+  // Power
+  fsDouble(p, "batt_voltage",             r.batt_voltage);
+  fsDouble(p, "batt_current_A",           r.batt_current_A);
+  fsDouble(p, "batt_power_W",             r.batt_power_W);
+  fsDouble(p, "batt_soc_pct",             r.batt_soc_pct);
+  fsDouble(p, "batt_remaining_Ah",        r.batt_remaining_Ah);
+  fsDouble(p, "batt_total_energy_Wh",     r.batt_total_energy_Wh);
+  fsDouble(p, "batt_peak_current_A",      r.batt_peak_current_A);
+  fsDouble(p, "batt_min_voltage",         r.batt_min_voltage);
 
-  String payload;
-  serializeJson(doc, payload);
-  
-  unsigned long t0 = millis();
-  int code = http.PATCH(payload);
-  uint32_t latency = (uint32_t)(millis() - t0);
+  // Solar Power
+  fsDouble(p, "solar_voltage",            r.solar_voltage);
+  fsDouble(p, "solar_current_A",          r.solar_current_A);
+  fsDouble(p, "solar_power_W",            r.solar_power_W);
+  fsDouble(p, "solar_energy_Wh",          r.solar_energy_Wh);
+  fsDouble(p, "solar_peak_current_A",     r.solar_peak_current_A);
+
+  // System health
+  fsDouble(p, "internal_temp_c",          r.internal_temp_c);
+  fsInt(p,    "free_heap",                (long)r.free_heap);
+  fsDouble(p, "heap_frag_pct",            r.heap_frag_pct);
+  fsInt(p,    "min_heap",                 (long)r.min_heap);
+  fsInt(p,    "log_count",                (long)r.log_count);
+  fsInt(p,    "sd_free_mb",               (long)r.sd_free_mb);
+  fsInt(p,    "sd_used_mb",               (long)r.sd_used_mb);
+  fsInt(p,    "upload_latency_ms",        (long)r.upload_latency_ms);
+  fsInt(p,    "avg_upload_latency_ms",    (long)r.avg_upload_latency_ms);
+  fsInt(p,    "sd_write_latency_ms",      (long)r.sd_write_latency_ms);
+  fsInt(p,    "sensor_stack_hwm",         (long)r.sensor_stack_hwm);
+  fsInt(p,    "upload_stack_hwm",         (long)r.upload_stack_hwm);
+
+  // Connectivity
+  fsInt(p,    "wifi_rssi",                (long)r.wifi_rssi);
+  fsBool(p,   "wifi_connected",           r.wifi_connected);
+  fsInt(p,    "wifi_reconnect_count",     (long)r.wifi_reconnect_count);
+  fsInt(p,    "wifi_offline_total_s",     (long)r.wifi_offline_total_s);
+  fsInt(p,    "longest_offline_streak_s", (long)r.longest_offline_streak_s);
+  fsInt(p,    "dongle_power_cycles",      (long)r.dongle_power_cycles);
+  fsInt(p,    "consec_fail_streak",       (long)r.consecutive_fail_streak);
+  fsInt(p,    "max_fail_streak",          (long)r.max_fail_streak);
+  fsInt(p,    "pending_row_count",        (long)r.pending_row_count);
+
+  // Modbus reliability
+  fsInt(p,    "total_read_count",         (long)r.total_read_count);
+  fsDouble(p, "modbus_error_rate_pct",    r.modbus_error_rate_pct);
+  fsInt(p,    "consec_modbus_fail",       (long)r.consec_modbus_fail);
+  fsInt(p,    "max_modbus_fail_streak",   (long)r.max_modbus_fail_streak);
+  fsInt(p,    "sensor_read_latency_ms",   (long)r.sensor_read_latency_ms);
+
+  // System diagnostics
+  fsInt(p,    "uptime_s",                 (long)r.uptime_s);
+  fsDouble(p, "uptime_h",                 r.uptime_h);
+  fsStr(p,    "sensor_status",            r.sensor_status.c_str());
+  fsStr(p,    "reset_reason",             r.reset_reason.c_str());
+  fsInt(p,    "boot_count",               (long)r.boot_count);
+  fsInt(p,    "send_success",             (long)r.send_success);
+  fsInt(p,    "send_fail",                (long)r.send_fail);
+  fsInt(p,    "sd_fail",                  (long)r.sd_fail, false);
+  p += "}}";
+
+  unsigned long t0   = millis();
+  int  code          = http.PATCH(p);
+  uint32_t latency   = (uint32_t)(millis() - t0);
   http.end();
 
-  if (code >= 200 && code < 300) {
-    g_http_2xx_count++; g_send_success++; g_consecutive_fail_streak = 0;
+  if (code > 0 && code < 300) {
+    g_send_success++;
+    g_consecutive_fail_streak = 0;
+    // Running mean of upload latency
     g_upload_latency_count++;
     g_avg_upload_latency_ms += (latency - g_avg_upload_latency_ms) / g_upload_latency_count;
-    g_total_bytes_sent += payload.length();
+    // Write back both latencies to shared struct
+    if (xSemaphoreTake(g_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+      g_reading.upload_latency_ms     = latency;
+      g_reading.avg_upload_latency_ms = g_avg_upload_latency_ms;
+      xSemaphoreGive(g_mutex);
+    }
+    Serial.printf("[Firestore] OK (HTTP %d, %lu ms, avg %lu ms) — %s\n",
+                  code, latency, g_avg_upload_latency_ms, r.timestamp);
     return true;
   } else {
-    if (code >= 400 && code < 500) g_http_4xx_count++;
-    else if (code >= 500) g_http_5xx_count++;
-    g_send_fail++; g_consecutive_fail_streak++;
-    if (g_consecutive_fail_streak > g_max_fail_streak) g_max_fail_streak = g_consecutive_fail_streak;
+    g_send_fail++;
+    g_consecutive_fail_streak++;
+    if (g_consecutive_fail_streak > g_max_fail_streak)
+      g_max_fail_streak = g_consecutive_fail_streak;
+    Serial.printf("[Firestore] FAIL (HTTP %d, %lu ms) — streak: %lu\n",
+                  code, latency, (unsigned long)g_consecutive_fail_streak);
     return false;
   }
 }
 
 // ── Heartbeat → Firestore: heartbeats/{STATION_ID} ───────────────────────────
 void uploadHeartbeat(const SensorReading& r) {
-  WiFiClientSecure client; client.setInsecure();
+  WiFiClientSecure client;
+  client.setInsecure();
+
   HTTPClient http;
-  http.begin(client, firestoreUrl("heartbeats", STATION_ID));
+  String url = firestoreUrl("heartbeats", STATION_ID);
+  http.begin(client, url);
   http.addHeader("Content-Type", "application/json");
 
-  JsonDocument doc;
-  JsonObject fields = doc["fields"].to<JsonObject>();
+  String p = "{\"fields\":{";
+  fsStr(p,    "station_id",               STATION_ID);
+  fsStr(p,    "timestamp",                r.timestamp);
+  fsDouble(p, "uptime_h",                 r.uptime_h);
+  fsInt(p,    "uptime_s",                 (long)r.uptime_s);
+  fsInt(p,    "boot_count",               (long)r.boot_count);
+  fsDouble(p, "batt_voltage",             r.batt_voltage);
+  fsDouble(p, "batt_soc_pct",             r.batt_soc_pct);
+  fsDouble(p, "batt_total_energy_Wh",     r.batt_total_energy_Wh);
+  fsDouble(p, "solar_energy_Wh",          r.solar_energy_Wh);
+  fsDouble(p, "internal_temp_c",          r.internal_temp_c);
+  fsInt(p,    "free_heap",                (long)r.free_heap);
+  fsDouble(p, "heap_frag_pct",            r.heap_frag_pct);
+  fsInt(p,    "min_heap",                 (long)r.min_heap);
+  fsInt(p,    "sensor_stack_hwm",         (long)r.sensor_stack_hwm);
+  fsInt(p,    "upload_stack_hwm",         (long)r.upload_stack_hwm);
+  fsInt(p,    "wifi_rssi",                (long)r.wifi_rssi);
+  fsInt(p,    "wifi_reconnect_count",     (long)r.wifi_reconnect_count);
+  fsInt(p,    "wifi_offline_total_s",     (long)r.wifi_offline_total_s);
+  fsInt(p,    "longest_offline_streak_s", (long)r.longest_offline_streak_s);
+  fsInt(p,    "dongle_power_cycles",      (long)r.dongle_power_cycles);
+  fsInt(p,    "avg_upload_latency_ms",    (long)r.avg_upload_latency_ms);
+  fsInt(p,    "sd_write_latency_ms",      (long)r.sd_write_latency_ms);
+  fsInt(p,    "pending_row_count",        (long)r.pending_row_count);
+  fsDouble(p, "modbus_error_rate_pct",    r.modbus_error_rate_pct);
+  fsInt(p,    "max_modbus_fail_streak",   (long)r.max_modbus_fail_streak);
+  fsInt(p,    "send_success",             (long)r.send_success);
+  fsInt(p,    "send_fail",               (long)r.send_fail);
+  fsInt(p,    "max_fail_streak",          (long)r.max_fail_streak);
+  fsStr(p,    "sensor_status",            r.sensor_status.c_str());
+  fsStr(p,    "reset_reason",             r.reset_reason.c_str(), false);
+  p += "}}";
 
-  auto fsVal = [&](const char* k, auto v, const char* type) {
-    if (strcmp(type, "double") == 0) fields[k]["doubleValue"] = v;
-    else if (strcmp(type, "int") == 0) fields[k]["integerValue"] = String(v);
-    else if (strcmp(type, "str") == 0) fields[k]["stringValue"] = String(v);
-    else if (strcmp(type, "bool") == 0) fields[k]["booleanValue"] = v;
-  };
-
-  fsVal("station_id", STATION_ID, "str");
-  fsVal("timestamp", r.timestamp, "str");
-  fsVal("uptime_h", r.uptime_h, "double");
-  fsVal("batt_voltage", r.batt_voltage, "double");
-  fsVal("free_heap", r.free_heap, "int");
-  fsVal("wifi_rssi", r.wifi_rssi, "int");
-  fsVal("http_2xx", g_http_2xx_count, "int");
-  fsVal("net_kbps", r.net_throughput_kbps, "double");
-
-  String payload;
-  serializeJson(doc, payload);
-  int code = http.PATCH(payload);
+  int code = http.PATCH(p);
   http.end();
 
-  if (code >= 200 && code < 300) {
-    g_total_bytes_sent += payload.length();
-    Serial.printf("[Heartbeat] OK (%d)\n", code);
-  } else Serial.printf("[Heartbeat] FAIL (%d)\n", code);
+  if (code > 0 && code < 300) {
+    Serial.printf("[Heartbeat] OK (HTTP %d)\n", code);
+  } else {
+    Serial.printf("[Heartbeat] FAIL (HTTP %d)\n", code);
+  }
 }
 
 
@@ -534,28 +559,29 @@ void sdWriteHeader(const char* path) {
 }
 
 bool sdAppendRow(const char* path, const SensorReading& r) {
-  unsigned long t0 = millis();
   File f = SD.open(path, FILE_APPEND);
   if (!f) {
-    g_sd_fail++; Serial.printf("[SD] Write error: %s\n", path);
+    g_sd_fail++;
+    Serial.printf("[SD] Write error: %s\n", path);
     return false;
   }
-  char row[1024]; // Increased buffer for new metrics
+  char row[768];
   snprintf(row, sizeof(row),
-    "%s,%.2f,%.2f,"
-    "%.2f,%.2f,%lu,"
-    "%.3f,%.4f,%.3f,%.1f,%.3f,"
-    "%.4f,%.4f,%.3f,"
-    "%.3f,%.4f,%.3f,%.4f,%.4f,"
-    "%.1f,%lu,%.1f,%lu,%lu,%lu,%lu,%lu,%lu," 
-    "%d,%d,%lu,%lu,%lu,%lu,%lu,%lu,"
-    "%lu,%.2f,%lu,%lu,%lu,"
-    "%lu,%.3f,%lu,%lu,%lu,"
-    "%s,%s,%lu,%lu,%lu,%lu,"
-    "%lu,%lu,%d,%lu,%lu,%.2f,%lu,%.2f,%ld,%lu", // New Prognostics
-    r.timestamp, r.temperature, r.humidity,
+    "%s,%.2f,%.2f,"       // env: ts, temp, hum
+    "%.2f,%.2f,%lu,"                         // rain: mm, 1h, raw
+    "%.3f,%.4f,%.3f,%.1f,%.3f,"             // power: v, i, p, soc, ah
+    "%.4f,%.4f,%.3f,"                        // batt ext: wh, peak_i, min_v
+    "%.3f,%.4f,%.3f,%.4f,%.4f,"              // solar: v, i, p, wh, peak_i
+    "%.1f,%lu,%.1f,%lu,%lu,%lu,%lu,%lu,%lu," // health: int_temp, min_h, frag, lc, free, used, lat, avg_lat, sd_lat
+    "%d,%d,%lu,%lu,%lu,%lu,%lu,%lu,"         // wifi: rssi, conn, recon, off_tot, long_off, dongle, streak, max_streak, pending
+    "%lu,%.2f,%lu,%lu,%lu,"                  // modbus: total, err_rate, consec, max, lat
+    "%lu,%.3f,%lu,%lu,%lu,"                  // sys: uptime_s, uptime_h, free, s_hwm, u_hwm
+    "%s,%s,%lu,%lu,%lu,%lu",                // meta: status, reset, boot, succ, fail, sd_fail
+    r.timestamp,
+    r.temperature, r.humidity,
     r.rainfall_mm, r.rainfall_1h_mm, (unsigned long)r.rain_raw,
-    r.batt_voltage, r.batt_current_A, r.batt_power_W, r.batt_soc_pct, r.batt_remaining_Ah,
+    r.batt_voltage, r.batt_current_A, r.batt_power_W,
+    r.batt_soc_pct, r.batt_remaining_Ah,
     r.batt_total_energy_Wh, r.batt_peak_current_A, r.batt_min_voltage,
     r.solar_voltage, r.solar_current_A, r.solar_power_W, r.solar_energy_Wh, r.solar_peak_current_A,
     r.internal_temp_c, (unsigned long)r.min_heap, r.heap_frag_pct, (unsigned long)r.log_count,
@@ -563,15 +589,10 @@ bool sdAppendRow(const char* path, const SensorReading& r) {
     r.wifi_rssi, (int)r.wifi_connected, (unsigned long)r.wifi_reconnect_count, (unsigned long)r.wifi_offline_total_s, (unsigned long)r.longest_offline_streak_s, (unsigned long)r.dongle_power_cycles, (unsigned long)r.consecutive_fail_streak, (unsigned long)r.max_fail_streak, (unsigned long)r.pending_row_count,
     (unsigned long)r.total_read_count, r.modbus_error_rate_pct, (unsigned long)r.consec_modbus_fail, (unsigned long)r.max_modbus_fail_streak, (unsigned long)r.sensor_read_latency_ms,
     (unsigned long)r.uptime_s, r.uptime_h, (unsigned long)r.free_heap, (unsigned long)r.sensor_stack_hwm, (unsigned long)r.upload_stack_hwm,
-    r.sensor_status.c_str(), r.reset_reason.c_str(), (unsigned long)r.boot_count, (unsigned long)r.send_success, (unsigned long)r.send_fail, (unsigned long)r.sd_fail,
-    (unsigned long)r.loop_jitter_max_ms, (unsigned long)r.brownout_count, (int)r.has_crash_log, (unsigned long)r.i2c_error_count, (unsigned long)r.sd_max_write_latency_ms,
-    r.batt_internal_resistance, (unsigned long)r.modbus_timeout_count, (unsigned long)r.modbus_crc_error_count, (long)r.ntp_drift_s, (unsigned long)r.current_upload_interval_s
+    r.sensor_status.c_str(), r.reset_reason.c_str(), (unsigned long)r.boot_count, (unsigned long)r.send_success, (unsigned long)r.send_fail, (unsigned long)r.sd_fail
   );
   f.println(row);
   f.close();
-  uint32_t lat = millis() - t0;
-  if (lat > g_sd_max_write_latency_ms) g_sd_max_write_latency_ms = lat;
-  g_sd_write_latency_ms = lat;
   return true;
 }
 
@@ -651,125 +672,179 @@ void flushPending() {
 // ── TASK 1: Sensor Task (Core 1, every 1 second) ──────────────────────────────
 void sensorTask(void* pvParams) {
   esp_task_wdt_add(NULL);
-  uint32_t lastRun = millis();
+
+  Serial.println("[SensorTask] Started on Core 1");
 
   while (true) {
     esp_task_wdt_reset();
-    uint32_t nowMs = millis();
-    uint32_t jitter = (nowMs - lastRun > 1000) ? (nowMs - lastRun - 1000) : 0;
-    if (jitter > g_loop_jitter_max_ms) g_loop_jitter_max_ms = jitter;
-    lastRun = nowMs;
 
     checkSerialRTCUpdate();
 
-    // ── Safe Sensor Reading (I2C Mutex) ─────────────────────────
-    if (xSemaphoreTake(g_i2c_mutex, pdMS_TO_TICKS(800)) == pdTRUE) {
-      // ── Modbus (temp/humidity) ─────────────────────────────
-      float  temperature  = 0.0f;
-      float  humidity     = 0.0f;
-      String sensorStatus = "ERROR";
+    // ── Read Modbus (temp/humidity) ─────────────────────────────
+    float  temperature  = 0.0f;
+    float  humidity     = 0.0f;
+    String sensorStatus = "ERROR";
 
-      g_total_read_count++;
-      unsigned long mb_t0  = millis();
-      uint8_t result = node.readHoldingRegisters(0x0000, 2);
-      uint32_t readLatency = (uint32_t)(millis() - mb_t0);
+    g_total_read_count++;
+    unsigned long mb_t0  = millis();
+    uint8_t result = node.readHoldingRegisters(0x0000, 2);
+    uint32_t readLatency = (uint32_t)(millis() - mb_t0);
 
-      if (result == node.ku8MBSuccess) {
-        humidity    = node.getResponseBuffer(0) / 10.0f;
-        temperature = node.getResponseBuffer(1) / 10.0f;
-        // Validation...
-        bool tempOK = (!isnan(temperature) && temperature >= TEMP_MIN && temperature <= TEMP_MAX);
-        bool humOK  = (!isnan(humidity)    && humidity    >= HUM_MIN  && humidity    <= HUM_MAX);
-        sensorStatus = (tempOK && humOK) ? "OK" : "ERROR";
-        if (tempOK && humOK) g_consec_modbus_fail = 0;
-        else {
-          g_consec_modbus_fail++;
-          if (g_consec_modbus_fail > g_max_modbus_fail_streak) g_max_modbus_fail_streak = g_consec_modbus_fail;
-        }
+    if (result == node.ku8MBSuccess) {
+      humidity    = node.getResponseBuffer(0) / 10.0f;
+      temperature = node.getResponseBuffer(1) / 10.0f;
+
+      bool tempOK = (!isnan(temperature) && temperature >= TEMP_MIN && temperature <= TEMP_MAX);
+      bool humOK  = (!isnan(humidity)    && humidity    >= HUM_MIN  && humidity    <= HUM_MAX);
+      sensorStatus = (tempOK && humOK) ? "OK" : "ERROR";
+
+      if (tempOK && humOK) {
+        g_consec_modbus_fail = 0;
       } else {
-        g_sensor_fail++;
         g_consec_modbus_fail++;
-        if (result == node.ku8MBResponseTimedOut) g_modbus_timeout_count++;
-        else if (result == node.ku8MBInvalidCRC) g_modbus_crc_error_count++;
-        if (g_consec_modbus_fail > g_max_modbus_fail_streak) g_max_modbus_fail_streak = g_consec_modbus_fail;
+        if (g_consec_modbus_fail > g_max_modbus_fail_streak)
+          g_max_modbus_fail_streak = g_consec_modbus_fail;
       }
-
-      // ── Rain Sensor ──────────────────────────────────────────
-      float rainfall_mm    = RainSensor.getRainfall();
-      float rainfall_1h_mm = RainSensor.getRainfall(1);
-      uint32_t rain_raw    = RainSensor.getRawData();
-
-      // ── Battery & Solar (INA219) ─────────────────────────────
-      float voltage    = ina219_batt.getBusVoltage_V();
-      float current_A  = ina219_batt.getCurrent_mA() / 1000.0f;
-      float power_W    = ina219_batt.getPower_mW() / 1000.0f;
-
-      float sol_voltage    = ina219_solar.getBusVoltage_V();
-      float sol_current_A  = ina219_solar.getCurrent_mA() / 1000.0f;
-      float sol_power_W    = ina219_solar.getPower_mW() / 1000.0f;
-
-      // ── Battery IR Calculation ──────────────────────────────
-      if (g_capture_ir && current_A > 0.1f) { 
-        // IR = (V_pre - V_loaded) / I_load
-        float dv = g_v_pre_load - voltage;
-        if (dv > 0) g_batt_internal_resistance = (dv / current_A) * 1000.0f; // mΩ
-        g_capture_ir = false;
-      }
-
-      xSemaphoreGive(g_i2c_mutex);
-
-      // (Rest of logic: Coulomb counting, heap, etc. - will keep these)
-      // Note: Re-using local variables from above for coulomb counting
-      g_batt_used_Ah         += current_A * (SENSOR_INTERVAL_MS / 3600000.0f);
-      g_batt_total_energy_Wh += power_W   * (SENSOR_INTERVAL_MS / 3600000.0f);
-      float remaining_Ah = CAPACITY_AH - g_batt_used_Ah;
-      float soc          = constrain((remaining_Ah / CAPACITY_AH) * 100.0f, 0.0f, 100.0f);
-      if (current_A > g_batt_peak_current_A) g_batt_peak_current_A = current_A;
-      if (voltage   < g_batt_min_voltage)    g_batt_min_voltage    = voltage;
-
-      g_solar_total_energy_Wh += sol_power_W * (SENSOR_INTERVAL_MS / 3600000.0f);
-      if (sol_current_A > g_solar_peak_current_A) g_solar_peak_current_A = sol_current_A;
-
-      // Heap & Temp
-      uint32_t heap     = ESP.getFreeHeap();
-      float    heapFrag = (heap > 0) ? (1.0f - (float)ESP.getMaxAllocHeap() / (float)heap) * 100.0f : 0.0f;
-      if (heap < g_min_heap) g_min_heap = heap;
-      float int_temp = temperatureRead();
-
-      // WiFi tracking...
-      if (WiFi.status() != WL_CONNECTED) {
-        g_current_offline_s++; g_wifi_offline_total_s++;
-        if (g_current_offline_s > g_longest_offline_streak_s) g_longest_offline_streak_s = g_current_offline_s;
-      } else g_current_offline_s = 0;
-
-      // Low-voltage cutoff
-      if (voltage <= CUTOFF_VOLTAGE) {
-        Serial.printf("[Power] CUTOFF @ %.2fV\n", voltage);
-        esp_restart();
-      }
-
-      // ── Build timestamp & Update Shared Reading ────────────────
-      char ts[20]; rtcNow(ts, sizeof(ts));
-      if (xSemaphoreTake(g_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
-        strncpy(g_reading.timestamp, ts, sizeof(g_reading.timestamp));
-        g_reading.temperature = temperature; g_reading.humidity = humidity;
-        g_reading.rainfall_mm = rainfall_mm; g_reading.rainfall_1h_mm = rainfall_1h_mm;
-        g_reading.rain_raw = rain_raw; // Fixed: was missing
-        g_reading.batt_voltage = voltage; g_reading.batt_current_A = current_A;
-        g_reading.batt_soc_pct = soc; g_reading.batt_total_energy_Wh = g_batt_total_energy_Wh;
-        g_reading.solar_voltage = sol_voltage; g_reading.solar_current_A = sol_current_A;
-        g_reading.internal_temp_c = int_temp; g_reading.min_heap = g_min_heap;
-        g_reading.loop_jitter_max_ms = g_loop_jitter_max_ms;
-        g_reading.brownout_count = g_brownout_count;
-        g_reading.i2c_error_count = g_i2c_error_count;
-        g_reading.batt_internal_resistance = g_batt_internal_resistance;
-        g_reading.modbus_timeout_count = g_modbus_timeout_count;
-        g_reading.modbus_crc_error_count = g_modbus_crc_error_count;
-        g_reading.current_upload_interval_s = g_current_upload_interval_s;
-        xSemaphoreGive(g_mutex);
-      }
+      if (!tempOK) Serial.printf("[Sensor] WARN: invalid temperature = %.2f\n", temperature);
+      if (!humOK)  Serial.printf("[Sensor] WARN: invalid humidity = %.2f\n",    humidity);
     } else {
-      g_i2c_error_count++;
+      g_sensor_fail++;
+      g_consec_modbus_fail++;
+      if (g_consec_modbus_fail > g_max_modbus_fail_streak)
+        g_max_modbus_fail_streak = g_consec_modbus_fail;
+      Serial.printf("[Sensor] Modbus FAIL (err 0x%02X) fail#%lu streak:%lu\n",
+                    result, (unsigned long)g_sensor_fail, (unsigned long)g_consec_modbus_fail);
+    }
+
+    // ── Read Rain Sensor (UART) ────────────────────────────────
+    float rainfall_mm    = RainSensor.getRainfall();
+    float rainfall_1h_mm = RainSensor.getRainfall(1);
+    uint32_t rain_raw    = RainSensor.getRawData();
+
+    // ── Read INA219 Battery ─────────────────────────────────────────
+    float voltage    = ina219_batt.getBusVoltage_V();
+    float current_mA = ina219_batt.getCurrent_mA();
+    float current_A  = current_mA / 1000.0f;
+    float power_mW   = ina219_batt.getPower_mW();
+    float power_W    = power_mW / 1000.0f;
+
+    // Battery: Coulomb counting + cumulative energy
+    g_batt_used_Ah         += current_A * (SENSOR_INTERVAL_MS / 3600000.0f);
+    g_batt_total_energy_Wh += power_W   * (SENSOR_INTERVAL_MS / 3600000.0f);
+
+    float remaining_Ah = CAPACITY_AH - g_batt_used_Ah;
+    float soc          = constrain((remaining_Ah / CAPACITY_AH) * 100.0f, 0.0f, 100.0f);
+
+    // Battery: Peak / session-minimum tracking
+    if (current_A > g_batt_peak_current_A) g_batt_peak_current_A = current_A;
+    if (voltage   < g_batt_min_voltage)    g_batt_min_voltage    = voltage;
+
+    // ── Read INA219 Solar ──────────────────────────────────────
+    float sol_voltage    = ina219_solar.getBusVoltage_V();
+    float sol_current_mA = ina219_solar.getCurrent_mA();
+    float sol_current_A  = sol_current_mA / 1000.0f;
+    float sol_power_mW   = ina219_solar.getPower_mW();
+    float sol_power_W    = sol_power_mW / 1000.0f;
+
+    // Solar: cumulative energy + peak tracking
+    g_solar_total_energy_Wh += sol_power_W * (SENSOR_INTERVAL_MS / 3600000.0f);
+    if (sol_current_A > g_solar_peak_current_A) g_solar_peak_current_A = sol_current_A;
+
+    // Heap low-water mark + fragmentation
+    uint32_t heap     = ESP.getFreeHeap();
+    uint32_t maxAlloc = ESP.getMaxAllocHeap();
+    float    heapFrag = (heap > 0) ? (1.0f - (float)maxAlloc / (float)heap) * 100.0f : 0.0f;
+    if (heap < g_min_heap) g_min_heap = heap;
+
+    // ESP32 internal die temperature
+    float int_temp = temperatureRead();
+
+    // WiFi offline tracking (updated every second)
+    if (WiFi.status() != WL_CONNECTED) {
+      g_current_offline_s++;
+      g_wifi_offline_total_s++;
+      if (g_current_offline_s > g_longest_offline_streak_s)
+        g_longest_offline_streak_s = g_current_offline_s;
+    } else {
+      g_current_offline_s = 0;
+    }
+
+    // Task stack high-water marks
+    uint32_t sensor_hwm = uxTaskGetStackHighWaterMark(NULL);
+    uint32_t upload_hwm = g_uploadTaskHandle ? uxTaskGetStackHighWaterMark(g_uploadTaskHandle) : 0;
+
+    // Low-voltage cutoff
+    if (voltage <= CUTOFF_VOLTAGE) {
+      Serial.printf("[Power] CUTOFF: voltage %.2fV <= %.1fV — halting safely.\n",
+                    voltage, CUTOFF_VOLTAGE);
+      esp_task_wdt_delete(NULL);
+      vTaskDelay(pdMS_TO_TICKS(3000));
+      esp_restart();
+    }
+
+    // ── Build timestamp ────────────────────────────────────────
+    char ts[20];
+    rtcNow(ts, sizeof(ts));
+
+    // ── Pack into shared struct ────────────────────────────────
+    if (xSemaphoreTake(g_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+      strncpy(g_reading.timestamp, ts, sizeof(g_reading.timestamp));
+      g_reading.temperature              = temperature;
+      g_reading.humidity                 = humidity;
+      g_reading.rainfall_mm              = rainfall_mm;
+      g_reading.rainfall_1h_mm           = rainfall_1h_mm;
+      g_reading.rain_raw                 = rain_raw;
+      g_reading.batt_voltage             = voltage;
+      g_reading.batt_current_A           = current_A;
+      g_reading.batt_power_W             = power_W;
+      g_reading.batt_soc_pct             = soc;
+      g_reading.batt_remaining_Ah        = remaining_Ah;
+      g_reading.batt_total_energy_Wh     = g_batt_total_energy_Wh;
+      g_reading.batt_peak_current_A      = g_batt_peak_current_A;
+      g_reading.batt_min_voltage         = g_batt_min_voltage;
+
+      g_reading.solar_voltage            = sol_voltage;
+      g_reading.solar_current_A          = sol_current_A;
+      g_reading.solar_power_W            = sol_power_W;
+      g_reading.solar_energy_Wh          = g_solar_total_energy_Wh;
+      g_reading.solar_peak_current_A     = g_solar_peak_current_A;
+      g_reading.internal_temp_c          = int_temp;
+      g_reading.min_heap                 = g_min_heap;
+      g_reading.log_count                = g_log_count;
+      g_reading.sd_free_mb               = (uint32_t)((SD.totalBytes() - SD.usedBytes()) / (1024UL * 1024UL));
+      g_reading.sd_used_mb               = (uint32_t)(SD.usedBytes() / (1024UL * 1024UL));
+      // upload_latency_ms / avg / sd_write_latency written back by upload/sdAppend
+      g_reading.wifi_rssi                = WiFi.RSSI();
+      g_reading.wifi_connected           = (WiFi.status() == WL_CONNECTED);
+      g_reading.wifi_reconnect_count     = g_wifi_reconnect_count;
+      g_reading.consecutive_fail_streak  = g_consecutive_fail_streak;
+      g_reading.max_fail_streak          = g_max_fail_streak;
+      g_reading.uptime_s                 = millis() / 1000;
+      g_reading.uptime_h                 = millis() / 3600000.0f;
+      g_reading.free_heap                = heap;
+      g_reading.heap_frag_pct            = heapFrag;
+      g_reading.sensor_status            = sensorStatus;
+      g_reading.reset_reason             = g_reset_reason;
+      g_reading.boot_count               = g_boot_count;
+      g_reading.send_success             = g_send_success;
+      g_reading.send_fail                = g_send_fail;
+      g_reading.sd_fail                  = g_sd_fail;
+      // Extended metrics
+      g_reading.total_read_count         = g_total_read_count;
+      g_reading.modbus_error_rate_pct    = g_total_read_count > 0
+                                           ? (float)g_sensor_fail / g_total_read_count * 100.0f : 0.0f;
+      g_reading.consec_modbus_fail       = g_consec_modbus_fail;
+      g_reading.max_modbus_fail_streak   = g_max_modbus_fail_streak;
+      g_reading.sensor_read_latency_ms   = readLatency;
+      g_reading.wifi_offline_total_s     = g_wifi_offline_total_s;
+      g_reading.longest_offline_streak_s = g_longest_offline_streak_s;
+      g_reading.dongle_power_cycles      = g_dongle_power_cycles;
+      g_reading.pending_row_count        = g_pending_row_count;
+      g_reading.avg_upload_latency_ms    = g_avg_upload_latency_ms;
+      g_reading.sd_write_latency_ms      = g_sd_write_latency_ms;
+      g_reading.sensor_stack_hwm         = sensor_hwm;
+      g_reading.upload_stack_hwm         = upload_hwm;
+      xSemaphoreGive(g_mutex);
     }
 
     // ── Log to SD (conditional frequency) ──────────────────────
@@ -879,29 +954,12 @@ void uploadTask(void* pvParams) {
 
     // ── 4. Power the dongle OFF ───────────────────────────────
     wifiDongleOff();
-    uint32_t activeWindowMs = millis() - g_radio_start_ms;
-    g_radio_on_duration_ms += activeWindowMs;
-    
-    // Throughput (kbps) = (Total Bytes / 1024) / (Duration / 1000)
-    float kbps = (activeWindowMs > 0) ? ((g_total_bytes_sent / 1024.0f) / (activeWindowMs / 1000.0f)) : 0.0f;
-    g_total_bytes_sent = 0; // Reset for next window
 
-    if (xSemaphoreTake(g_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-      g_reading.net_throughput_kbps = kbps;
-      g_reading.sd_max_write_latency_ms = g_sd_max_write_latency_ms;
-      xSemaphoreGive(g_mutex);
-    }
-
-    // Safe Adaptive Low Power mode: spacing out uploads if battery < 11.5V
-    float voltage = g_reading.batt_voltage;
-    if (voltage < 11.5f) {
-      g_current_upload_interval_s = UPLOAD_INTERVAL_S * 5; // upload every 5 mins
-      Serial.println("[Power] Low battery — spacing records to 5 min.");
-    } else {
-      g_current_upload_interval_s = UPLOAD_INTERVAL_S;
-    }
-
-    uint32_t sleepMs = (g_current_upload_interval_s * 1000) - WIFI_DONGLE_BOOT_MS - 20000;
+    // Sleep for the rest of the upload interval
+    // (interval - dongle boot - heartbeat grace = ~60s - 6s - 20s = ~34s)
+    const uint32_t sleepMs = (UPLOAD_INTERVAL_S * 1000)
+                             - WIFI_DONGLE_BOOT_MS
+                             - 20000;
     vTaskDelay(pdMS_TO_TICKS(sleepMs > 1000 ? sleepMs : 1000));
   }
 }
@@ -946,10 +1004,6 @@ void heartbeatTask(void* pvParams) {
 // =============================================================================
 
 void setup() {
-  // ── Mutexes (Initialized FIRST to prevent early task/helper crashes) ──
-  g_mutex = xSemaphoreCreateMutex();
-  g_i2c_mutex = xSemaphoreCreateMutex();
-  
   Serial.begin(115200);
   delay(300);
   Serial.println("\n=== Sipat Banwa — Reliability Test Firmware ===");
@@ -958,39 +1012,11 @@ void setup() {
   g_reset_reason = resetReasonString();
   Serial.printf("[Boot] Reset reason: %s\n", g_reset_reason.c_str());
 
-  prefs.begin("soak", false);
+  prefs.begin("soak", false);                          // NVS namespace "soak"
   g_boot_count = prefs.getUInt("boot_count", 0) + 1;
   prefs.putUInt("boot_count", g_boot_count);
-  
-  // Track brownouts separately
-  g_brownout_count = prefs.getUInt("brown_count", 0);
-  if (esp_reset_reason() == ESP_RST_BROWNOUT) {
-    g_brownout_count++;
-    prefs.putUInt("brown_count", g_brownout_count);
-  }
-  
-  // Crash Logging: If reset was panic/WDT, write to /crashlog.txt
-  esp_reset_reason_t reason = esp_reset_reason();
-  if (reason == ESP_RST_PANIC || reason == ESP_RST_INT_WDT || reason == ESP_RST_TASK_WDT || reason == ESP_RST_WDT) {
-    if (SD.begin(SD_CS)) {
-      File f = SD.open("/crashlog.txt", FILE_APPEND);
-      if (f) {
-        char ts[20]; rtcNow(ts, sizeof(ts));
-        f.printf("[%s] CRASH DETECTED: %s (Boot #%lu)\n", ts, g_reset_reason.c_str(), g_boot_count);
-        f.close();
-      }
-    }
-  }
   prefs.end();
-  
-  // Check if crash log exists for g_reading
-  bool hasCrash = SD.exists("/crashlog.txt");
-  if (xSemaphoreTake(g_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-    g_reading.has_crash_log = hasCrash;
-    xSemaphoreGive(g_mutex);
-  }
-  Serial.printf("[Boot] Boot count: %lu, Brownouts: %lu\n", 
-                (unsigned long)g_boot_count, (unsigned long)g_brownout_count);
+  Serial.printf("[Boot] Boot count: %lu\n", (unsigned long)g_boot_count);
 
   // ── Watchdog Timer ─────────────────────────────────────────
   esp_task_wdt_init(WATCHDOG_TIMEOUT_S, true);
@@ -1056,15 +1082,16 @@ void setup() {
   connectWiFi();
   g_wifi_reconnect_count = 0;   // boot connect doesn't count as a "reconnect"
 
+  // ── Mutex ──────────────────────────────────────────────────
+  g_mutex = xSemaphoreCreateMutex();
+  configASSERT(g_mutex);
+
   // ── Initialize shared reading with safe defaults ───────────
   memset(&g_reading, 0, sizeof(g_reading));
   g_reading.sensor_status = "INIT";
   g_reading.reset_reason  = g_reset_reason;
   g_reading.boot_count    = g_boot_count;
   g_batt_min_voltage      = 99.0f;   // sentinel before first INA219 read
-
-  configASSERT(g_mutex);
-  configASSERT(g_i2c_mutex);
 
   // ── Watchdog: done with setup ──────────────────────────────
   esp_task_wdt_delete(NULL);
