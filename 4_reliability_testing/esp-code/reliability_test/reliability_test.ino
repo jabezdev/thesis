@@ -54,8 +54,6 @@ const int   DAYLIGHT_OFFSET_SEC  = 0;
 const int   WIFI_TIMEOUT_MS     = 20000;
 const int   WATCHDOG_TIMEOUT_S  = 30;
 
-// Debounce (rain gauge — hardware disabled, kept for future use)
-const unsigned long RAIN_DEBOUNCE_MS = 150;
 
 // SD & Serial pins
 #define SD_CS          5
@@ -121,18 +119,18 @@ struct SensorReading {
   float     solar_peak_current_A; // A — session maximum
 
   // System health
-  float     internal_temp_c;    // °C — ESP32 die temperature ← NEW
-  uint32_t  min_heap;           // bytes — heap low-water mark← NEW
-  uint32_t  log_count;          // total SD rows written      ← NEW
-  uint32_t  sd_free_mb;         // MB remaining on SD card    ← NEW
-  uint32_t  upload_latency_ms;  // last PATCH round-trip ms   ← NEW
+  uint32_t  internal_temp_c;    // °C — ESP32 die temperature
+  uint32_t  min_heap;           // bytes — heap low-water mark
+  uint32_t  log_count;          // total SD rows written
+  uint32_t  sd_free_mb;         // MB remaining on SD card
+  uint32_t  upload_latency_ms;  // last PATCH round-trip ms
 
   // Connectivity
   int       wifi_rssi;          // dBm
   bool      wifi_connected;
-  uint32_t  wifi_reconnect_count;     // link-drop + reconnect events ← NEW
-  uint32_t  consecutive_fail_streak;  // current upload fail run      ← NEW
-  uint32_t  max_fail_streak;          // worst fail run this session  ← NEW
+  uint32_t  wifi_reconnect_count;     // link-drop + reconnect events
+  uint32_t  consecutive_fail_streak;  // current upload fail run
+  uint32_t  max_fail_streak;          // worst fail run this session
 
   // System diagnostics
   uint32_t  uptime_s;
@@ -255,16 +253,6 @@ volatile float g_v_pre_load = 0;
 volatile bool  g_capture_ir = false;
 
 
-// ── Rain Interrupt State (DISABLED — kept for future) ─────────────────────────
-// volatile uint32_t      g_rain_count = 0;
-// volatile unsigned long g_last_tip_ms = 0;
-// void IRAM_ATTR rainISR() {
-//   unsigned long now = millis();
-//   if (now - g_last_tip_ms > RAIN_DEBOUNCE_MS) {
-//     g_rain_count++;
-//     g_last_tip_ms = now;
-//   }
-// }
 
 
 // =============================================================================
@@ -529,7 +517,9 @@ void sdWriteHeader(const char* path) {
             "wifi_rssi,wifi_connected,wifi_reconnect_count,wifi_offline_total_s,longest_offline_streak_s,dongle_power_cycles,consec_fail_streak,max_fail_streak,pending_row_count,"
             "total_read_count,modbus_error_rate_pct,consec_modbus_fail,max_modbus_fail_streak,sensor_read_latency_ms,"
             "uptime_s,uptime_h,free_heap,sensor_stack_hwm,upload_stack_hwm,"
-            "sensor_status,reset_reason,boot_count,send_success,send_fail,sd_fail");
+            "sensor_status,reset_reason,boot_count,send_success,send_fail,sd_fail,"
+            "loop_jitter_max_ms,brownout_count,has_crash_log,i2c_error_count,sd_max_write_latency_ms,"
+            "batt_internal_resistance,modbus_timeout_count,modbus_crc_error_count,ntp_drift_s,upload_interval_s");
   f.close();
 }
 
@@ -552,7 +542,7 @@ bool sdAppendRow(const char* path, const SensorReading& r) {
     "%lu,%.2f,%lu,%lu,%lu,"
     "%lu,%.3f,%lu,%lu,%lu,"
     "%s,%s,%lu,%lu,%lu,%lu,"
-    "%lu,%lu,%d,%lu,%lu,%.2f,%lu,%.2f,%ld,%lu", // New Prognostics
+    "%lu,%lu,%d,%lu,%lu,%.2f,%lu,%lu,%ld,%lu", // New Prognostics
     r.timestamp, r.temperature, r.humidity,
     r.rainfall_mm, r.rainfall_1h_mm, (unsigned long)r.rain_raw,
     r.batt_voltage, r.batt_current_A, r.batt_power_W, r.batt_soc_pct, r.batt_remaining_Ah,
@@ -718,8 +708,6 @@ void sensorTask(void* pvParams) {
 
       xSemaphoreGive(g_i2c_mutex);
 
-      // (Rest of logic: Coulomb counting, heap, etc. - will keep these)
-      // Note: Re-using local variables from above for coulomb counting
       g_batt_used_Ah         += current_A * (SENSOR_INTERVAL_MS / 3600000.0f);
       g_batt_total_energy_Wh += power_W   * (SENSOR_INTERVAL_MS / 3600000.0f);
       float remaining_Ah = CAPACITY_AH - g_batt_used_Ah;
