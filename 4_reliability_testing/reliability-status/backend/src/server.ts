@@ -389,11 +389,6 @@ Bun.serve({
       return json({ authenticated: true, username: session.u });
     }
 
-    const session = getSessionFromRequest(req);
-    if (!session) {
-      return json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     if (url.pathname === "/api/latest") {
       const payload = buildLatestPayload();
       if (!payload.latestPacket) {
@@ -426,6 +421,11 @@ Bun.serve({
       }
 
       return json(payload);
+    }
+
+    const session = getSessionFromRequest(req);
+    if (!session) {
+      return json({ error: "Unauthorized" }, { status: 401 });
     }
 
     if (url.pathname === "/api/export/readings.csv") {

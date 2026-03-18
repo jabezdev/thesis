@@ -77,6 +77,11 @@ bun run dev
 
 ## API Summary
 
+Access model:
+
+- Public: `/api/health`, `/api/auth/session`, `/api/latest`, `/api/charts`
+- Auth required: `/api/export/readings.csv`, `/api/export/charts.csv`, `/api/auth/logout`
+
 - `GET /api/health`
 - `POST /api/auth/login`
 - `POST /api/auth/logout`

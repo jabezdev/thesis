@@ -159,19 +159,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!authenticated) {
-      return;
-    }
-
     const fetchLatest = async () => {
       try {
         const data = await apiGet<LatestResponse>("/api/latest");
         setLatest(data);
-      } catch (error) {
-        const code = (error as Error).message;
-        if (code === "401") {
-          setAuthenticated(false);
-        }
+      } catch {
+        // Keep previous data when transient API errors happen.
       }
     };
 
@@ -181,22 +174,15 @@ export default function App() {
     }, 10000);
 
     return () => clearInterval(id);
-  }, [authenticated]);
+  }, []);
 
   useEffect(() => {
-    if (!authenticated) {
-      return;
-    }
-
     const fetchCharts = async () => {
       try {
         const data = await apiGet<ChartResponse>("/api/charts?hours=24&bucketMinutes=5");
         setCharts(data);
-      } catch (error) {
-        const code = (error as Error).message;
-        if (code === "401") {
-          setAuthenticated(false);
-        }
+      } catch {
+        // Keep previous chart data when transient API errors happen.
       }
     };
 
@@ -206,7 +192,7 @@ export default function App() {
     }, 30000);
 
     return () => clearInterval(id);
-  }, [authenticated]);
+  }, []);
 
   const packet = latest?.latestPacket ?? null;
   const elapsedSinceReceive = useMemo(() => {
@@ -266,42 +252,6 @@ export default function App() {
     );
   }
 
-  if (!authenticated) {
-    return (
-      <div className="mx-auto flex min-h-screen w-full max-w-xl items-center justify-center px-4 text-slate-100">
-        <form onSubmit={onLogin} className="w-full rounded-3xl border border-slate-700/80 bg-slate-900/60 p-6 shadow-2xl">
-          <p className="text-xs uppercase tracking-[0.2em] text-sky-300">Secure Access</p>
-          <h1 className="mt-1 text-2xl font-black">Reliability Status Login</h1>
-          <p className="mt-2 text-sm text-slate-300">This dashboard is restricted to the research team.</p>
-
-          <label className="mt-4 block text-sm text-slate-300">Username</label>
-          <input
-            className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 outline-none focus:border-sky-400"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            autoComplete="username"
-          />
-
-          <label className="mt-3 block text-sm text-slate-300">Password</label>
-          <input
-            type="password"
-            className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 outline-none focus:border-sky-400"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-          />
-
-          {loginError ? <p className="mt-3 text-sm text-rose-300">{loginError}</p> : null}
-          {bootError ? <p className="mt-2 text-sm text-amber-300">{bootError}</p> : null}
-
-          <button className="mt-4 w-full rounded-xl bg-sky-500 px-4 py-2 font-semibold text-slate-950" type="submit">
-            Sign In
-          </button>
-        </form>
-      </div>
-    );
-  }
-
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-6 pt-4 text-slate-100">
       <header className="rounded-3xl border border-slate-700/80 bg-slate-900/55 p-4 shadow-xl shadow-black/30 backdrop-blur-sm">
@@ -310,27 +260,68 @@ export default function App() {
             <p className="text-xs uppercase tracking-[0.2em] text-sky-300">Project Sipat Banwa</p>
             <h1 className="mt-1 text-2xl font-black tracking-tight text-white">Reliability Status</h1>
           </div>
-          <button onClick={onLogout} className="rounded-lg border border-slate-600 px-3 py-1 text-sm text-slate-200">
-            Logout
-          </button>
+          {authenticated ? (
+            <button onClick={onLogout} className="rounded-lg border border-slate-600 px-3 py-1 text-sm text-slate-200">
+              Logout
+            </button>
+          ) : null}
         </div>
         <p className="mt-2 text-sm text-slate-300">Realtime packet visibility with server-side archived telemetry.</p>
+        {bootError ? <p className="mt-2 text-sm text-amber-300">{bootError}</p> : null}
       </header>
 
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <a
-          href="/api/export/readings.csv?hours=24"
-          className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-center text-sm text-slate-200"
+      {authenticated ? (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <a
+            href="/api/export/readings.csv?hours=24"
+            className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-center text-sm text-slate-200"
+          >
+            Export Readings CSV
+          </a>
+          <a
+            href="/api/export/charts.csv?hours=24&bucketMinutes=5"
+            className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-center text-sm text-slate-200"
+          >
+            Export Charts CSV
+          </a>
+        </div>
+      ) : (
+        <form
+          onSubmit={onLogin}
+          className="mt-3 rounded-2xl border border-slate-700/80 bg-slate-900/60 p-4 shadow-xl"
         >
-          Export Readings CSV
-        </a>
-        <a
-          href="/api/export/charts.csv?hours=24&bucketMinutes=5"
-          className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-center text-sm text-slate-200"
-        >
-          Export Charts CSV
-        </a>
-      </div>
+          <p className="text-xs uppercase tracking-[0.2em] text-sky-300">Restricted Actions</p>
+          <p className="mt-1 text-sm text-slate-300">Latest packet and trends are public. Sign in to download CSV files.</p>
+
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="block text-sm text-slate-300">Username</label>
+              <input
+                className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 outline-none focus:border-sky-400"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoComplete="username"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-slate-300">Password</label>
+              <input
+                type="password"
+                className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 outline-none focus:border-sky-400"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+              />
+            </div>
+          </div>
+
+          {loginError ? <p className="mt-3 text-sm text-rose-300">{loginError}</p> : null}
+
+          <button className="mt-4 rounded-xl bg-sky-500 px-4 py-2 font-semibold text-slate-950" type="submit">
+            Sign In For Exports
+          </button>
+        </form>
+      )}
 
       <div className="mt-4 grid grid-cols-2 gap-2 rounded-2xl bg-slate-950/40 p-1">
         <button
