@@ -99,12 +99,15 @@ function num(value: number | null | undefined, digits = 2): string {
 async function apiGet<T>(path: string): Promise<T> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 10000);
-  const res = await fetch(path, { credentials: "include", signal: controller.signal });
-  clearTimeout(timeout);
-  if (!res.ok) {
-    throw new Error(`${res.status}`);
+  try {
+    const res = await fetch(path, { credentials: "include", signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`${res.status}`);
+    }
+    return (await res.json()) as T;
+  } finally {
+    clearTimeout(timeout);
   }
-  return (await res.json()) as T;
 }
 
 export default function App() {
@@ -130,8 +133,22 @@ export default function App() {
         const session = await apiGet<{ authenticated: boolean }>("/api/auth/session");
         setAuthenticated(session.authenticated);
         setBootError("");
-      } catch {
+      } catch (error) {
+        const code = (error as Error).message;
         setAuthenticated(false);
+
+        // If backend responds with auth/client codes, connectivity is OK.
+        if (code === "401" || code === "403") {
+          setBootError("");
+          return;
+        }
+
+        // Endpoint missing usually means stale backend deploy, not network outage.
+        if (code === "404") {
+          setBootError("Backend is reachable, but /api/auth/session is missing. Redeploy backend service.");
+          return;
+        }
+
         setBootError("Unable to reach backend API through /api. Check Dokploy service routing and backend status.");
       } finally {
         setAuthChecked(true);
