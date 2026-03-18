@@ -7,8 +7,7 @@ import {
   getReadingsForCsv,
   getRecentReadings
 } from "./db";
-import { startPoller } from "./poller";
-import { getPollerStatus } from "./poller";
+import { getPollerStatus, seedLatestNow, startPoller } from "./poller";
 import {
   checkRateLimit,
   clearFailedAttempts,
@@ -395,6 +394,14 @@ Bun.serve({
     }
 
     if (url.pathname === "/api/latest") {
+      if (!getLatestReading()) {
+        try {
+          await seedLatestNow();
+        } catch (error) {
+          console.error("/api/latest seed failed", error);
+        }
+      }
+
       const payload = buildLatestPayload();
       if (!payload.latestPacket) {
         return json({ ...payload, message: "Waiting for first packet" });

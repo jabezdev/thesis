@@ -47,6 +47,7 @@ async function bootstrapCursor(): Promise<void> {
   // Start from the most recent packet to avoid ingesting old history.
   const latest = await fetchLatestReading();
   if (!latest) {
+    console.warn("[POLLER] No readings available yet in Firestore.");
     return;
   }
 
@@ -54,6 +55,7 @@ async function bootstrapCursor(): Promise<void> {
   pollerStatus.totalInserted += 1;
   cursorTs = latest.ts;
   pollerStatus.cursorTs = cursorTs;
+  console.log(`[POLLER] Bootstrapped cursor at ts=${cursorTs}.`);
 }
 
 async function ingestNewReadings(): Promise<void> {
@@ -117,7 +119,38 @@ export function getPollerStatus(): PollerStatus {
   };
 }
 
+export async function seedLatestNow(): Promise<{ seededPacket: boolean; syncedHeartbeat: boolean }> {
+  let seededPacket = false;
+  let syncedHeartbeat = false;
+
+  const latest = await fetchLatestReading();
+  if (latest) {
+    insertReading(latest);
+    if (cursorTs === null || latest.ts > cursorTs) {
+      cursorTs = latest.ts;
+      pollerStatus.cursorTs = cursorTs;
+    }
+    pollerStatus.totalInserted += 1;
+    seededPacket = true;
+  }
+
+  const hb = await fetchHeartbeat();
+  if (hb) {
+    upsertHeartbeat(hb);
+    syncedHeartbeat = true;
+  }
+
+  if (seededPacket || syncedHeartbeat) {
+    pollerStatus.lastSuccessAt = new Date().toISOString();
+    pollerStatus.lastError = null;
+    pollerStatus.lastErrorAt = null;
+  }
+
+  return { seededPacket, syncedHeartbeat };
+}
+
 export async function startPoller(): Promise<void> {
+  console.log(`[POLLER] Starting (interval=${config.pollIntervalMs}ms).`);
   await tick();
   setInterval(() => {
     void tick();
