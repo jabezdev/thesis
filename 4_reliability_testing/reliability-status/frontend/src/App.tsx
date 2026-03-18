@@ -146,9 +146,10 @@ export default function App() {
         const code = (error as Error).message;
         setAuthenticated(false);
 
-        // If backend responds with auth/client codes, connectivity is OK.
         if (code === "401" || code === "403") {
-          setBootError("");
+          setBootError(
+            "API returned Unauthorized for /api/auth/session. This usually means /api is routed to the wrong service or protected by a gateway/auth proxy."
+          );
           return;
         }
 
@@ -175,7 +176,11 @@ export default function App() {
         setLatestError("");
       } catch (error) {
         const code = (error as Error).message;
-        setLatestError(code === "404" ? "Endpoint /api/latest is missing on backend." : "Unable to fetch latest packet from backend.");
+        if (code === "401" || code === "403") {
+          setLatestError("API returned Unauthorized for /api/latest. Check Dokploy/Cloudflare route protection and ensure /api proxies to backend.");
+          return;
+        }
+        setLatestError(code === "404" ? "Endpoint /api/latest is missing on backend." : `Unable to fetch latest packet from backend (HTTP ${code}).`);
       }
     };
 
@@ -195,7 +200,11 @@ export default function App() {
         setChartsError("");
       } catch (error) {
         const code = (error as Error).message;
-        setChartsError(code === "404" ? "Endpoint /api/charts is missing on backend." : "Unable to fetch chart aggregates from backend.");
+        if (code === "401" || code === "403") {
+          setChartsError("API returned Unauthorized for /api/charts. Check Dokploy/Cloudflare route protection and ensure /api proxies to backend.");
+          return;
+        }
+        setChartsError(code === "404" ? "Endpoint /api/charts is missing on backend." : `Unable to fetch chart aggregates from backend (HTTP ${code}).`);
       }
     };
 
