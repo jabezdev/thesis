@@ -39,6 +39,7 @@ docker compose up -d --build
 
 For Dokploy/VPS deployment, set these environment variables in your app settings:
 
+- `FRONTEND_PORT` (optional, default `18080`)
 - `AUTH_PASSWORD` (required, strong password)
 - `SESSION_SECRET` (required, long random secret)
 - `AUTH_USERNAME` (optional, default `researcher`)
@@ -49,7 +50,7 @@ For Dokploy/VPS deployment, set these environment variables in your app settings
 
 Open:
 
-- Web UI: `http://<server-ip>:8080`
+- Web UI: `http://<server-ip>:18080` (or your configured `FRONTEND_PORT`)
 
 ## Local Development
 
