@@ -33,7 +33,7 @@ Copy `.env.example` to `.env` and fill in the values for your Firebase project.
 docker compose up --build
 ```
 
-The frontend is available on port `8080` and the Bun service health endpoint is available on port `3001`.
+The frontend is available on port `18080` and the Bun service health endpoint is available on port `3001`.
 
 ## Firebase Rules
 
