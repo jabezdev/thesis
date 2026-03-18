@@ -2,6 +2,7 @@ import { config } from "./config";
 import type { Heartbeat, Reading } from "./types";
 
 const base = `https://firestore.googleapis.com/v1/projects/${config.firestoreProjectId}/databases/(default)/documents`;
+const FIRESTORE_TIMEOUT_MS = 10000;
 
 type FirestoreDocument = {
   name: string;
@@ -32,11 +33,15 @@ function strFromField(value: Record<string, string | number | boolean> | undefin
 }
 
 async function runQuery(payload: unknown): Promise<FirestoreDocument[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FIRESTORE_TIMEOUT_MS);
   const res = await fetch(`${base}:runQuery?key=${config.firestoreApiKey}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    signal: controller.signal
   });
+  clearTimeout(timeout);
 
   if (!res.ok) {
     const body = await res.text();
@@ -106,7 +111,12 @@ export async function fetchReadingsAfter(tsExclusive: number, limit = 100): Prom
 }
 
 export async function fetchHeartbeat(): Promise<Heartbeat | null> {
-  const res = await fetch(`${base}/heartbeats/${config.stationId}?key=${config.firestoreApiKey}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FIRESTORE_TIMEOUT_MS);
+  const res = await fetch(`${base}/heartbeats/${config.stationId}?key=${config.firestoreApiKey}`, {
+    signal: controller.signal
+  });
+  clearTimeout(timeout);
   if (res.status === 404) {
     return null;
   }

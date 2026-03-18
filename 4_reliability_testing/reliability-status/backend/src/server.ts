@@ -307,8 +307,6 @@ function isMetric(value: string): value is MetricKey {
   return METRICS.includes(value as MetricKey);
 }
 
-await startPoller();
-
 if (config.authPassword === "" && config.authPasswordHash === "") {
   console.warn("[SECURITY] AUTH_PASSWORD or AUTH_PASSWORD_HASH is not set. Login will always fail.");
 }
@@ -446,3 +444,6 @@ Bun.serve({
 });
 
 console.log(`reliability-status backend listening on :${config.port}`);
+
+// Keep API responsive even when Firestore is slow/unreachable.
+void startPoller();
