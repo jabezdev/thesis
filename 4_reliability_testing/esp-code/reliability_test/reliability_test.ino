@@ -14,7 +14,6 @@
 #include <time.h>             // NTP time support
 #include "DFRobot_RainfallSensor.h"
 #include <Adafruit_INA219.h>
-#include <esp_task_wdt.h>
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -409,7 +408,8 @@ bool syncRTCWithNTP() {
                         timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
     uint32_t ntp_now = rtc.now().unixtime();
     g_ntp_drift_s = (int32_t)ntp_now - (int32_t)rtc_before;
-    if (abs(g_ntp_drift_s) > 3600) g_ntp_drift_s = 0;
+    // During first boot or large drift, don't clamp drift to 0 so we can see it in metrics
+    // if (abs(g_ntp_drift_s) > 3600) g_ntp_drift_s = 0; 
     g_last_ntp_sync_ms = millis();
     g_ntp_backoff_ms = NTP_BACKOFF_MIN_MS;
     Serial.printf("[RTC] Synced. Drift: %ld s\n", (long)g_ntp_drift_s);
@@ -885,10 +885,8 @@ uint32_t countFileRows(const char* path) {
 // =============================================================================
 
 void sensorTask(void* pvParams) {
-  esp_task_wdt_add(NULL);
   uint32_t lastRun = millis();
   while (true) {
-    esp_task_wdt_reset();
     uint32_t nowMs = millis();
     uint32_t jitter = (nowMs - lastRun > 1000) ? (nowMs - lastRun - 1000) : 0;
     if (jitter > g_loop_jitter_max_ms) g_loop_jitter_max_ms = jitter;
@@ -930,9 +928,9 @@ void sensorTask(void* pvParams) {
       }
       xSemaphoreGive(g_i2c_mutex);
 
-      g_batt_used_Ah += current_A * (SENSOR_INTERVAL_MS / 3600000.0f);
-      g_batt_total_energy_Wh += (voltage * current_A) * (SENSOR_INTERVAL_MS / 3600000.0f);
-      g_solar_total_energy_Wh += (sol_voltage * sol_current_A) * (SENSOR_INTERVAL_MS / 3600000.0f);
+      g_batt_used_Ah += abs(current_A) * (SENSOR_INTERVAL_MS / 3600000.0f);
+      g_batt_total_energy_Wh += (voltage * abs(current_A)) * (SENSOR_INTERVAL_MS / 3600000.0f);
+      g_solar_total_energy_Wh += (sol_voltage * abs(sol_current_A)) * (SENSOR_INTERVAL_MS / 3600000.0f);
       float soc = constrain((1.0f - (g_batt_used_Ah / CAPACITY_AH)) * 100.0f, 0.0f, 100.0f);
       if (voltage < g_batt_min_voltage) g_batt_min_voltage = voltage;
 
@@ -1002,11 +1000,9 @@ void sensorTask(void* pvParams) {
 }
 
 void uploadTask(void* pvParams) {
-  esp_task_wdt_add(NULL);
   uint32_t lastUploadMs = 0;
   vTaskDelay(pdMS_TO_TICKS(5000));
   while (true) {
-    esp_task_wdt_reset();
     SensorReading snap;
     bool hasSnap = false;
     if (xSemaphoreTake(g_mutex, pdMS_TO_TICKS(300)) == pdTRUE) {
@@ -1049,7 +1045,9 @@ void uploadTask(void* pvParams) {
         lastUploadMs = now;
       }
     }
-    g_current_upload_interval_s = (voltage < 11.6f) ? UPLOAD_INTERVAL_S * 5 : UPLOAD_INTERVAL_S;
+    // Only throttle if voltage is in the "low but valid" range (1.0V to 11.6V).
+    // If it's 0V, we assume a sensor error and don't throttle upload diagnostics.
+    g_current_upload_interval_s = (voltage < 11.6f && voltage > 1.0f) ? UPLOAD_INTERVAL_S * 5 : UPLOAD_INTERVAL_S;
     vTaskDelay(pdMS_TO_TICKS(5000));
   }
 }
@@ -1062,10 +1060,8 @@ bool uploadReading(const SensorReading& r) {
 }
 
 void heartbeatTask(void* pvParams) {
-  esp_task_wdt_add(NULL);
   vTaskDelay(pdMS_TO_TICKS(15000));
   while (true) {
-    esp_task_wdt_reset();
     if (g_dongle_on && WiFi.status() == WL_CONNECTED) {
       SensorReading snap;
       if (xSemaphoreTake(g_mutex, pdMS_TO_TICKS(300)) == pdTRUE) { snap = g_reading; xSemaphoreGive(g_mutex); }
@@ -1094,21 +1090,24 @@ void setup() {
   if (esp_reset_reason() == ESP_RST_BROWNOUT) { g_brownout_count++; prefs.putUInt("brown_count", g_brownout_count); }
   prefs.end();
 
-  esp_task_wdt_config_t twdt_config = {
-      .timeout_ms = WATCHDOG_TIMEOUT_S * 1000,
-      .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,    // Watch matches all cores
-      .trigger_panic = true,
-  };
-  esp_task_wdt_init(&twdt_config);
-  esp_task_wdt_add(NULL);
-
   Wire.begin(21, 22);
   if (rtc.begin()) {
     if (rtc.lostPower()) Serial.println("[RTC] Lost power!");
+  } else {
+    Serial.println("[RTC] FAILED to initialize!");
   }
 
-  if (ina219_batt.begin()) ina219_batt.setCalibration_32V_2A();
-  if (ina219_solar.begin()) ina219_solar.setCalibration_32V_2A();
+  if (ina219_batt.begin()) {
+    ina219_batt.setCalibration_32V_2A();
+  } else {
+    Serial.println("[INA219] Battery sensor FAILED!");
+  }
+
+  if (ina219_solar.begin()) {
+    ina219_solar.setCalibration_32V_2A();
+  } else {
+    Serial.println("[INA219] Solar sensor FAILED!");
+  }
 
   prefs.begin("soak", false);
   g_batt_used_Ah = prefs.getFloat("used_ah", -1.0f);
@@ -1147,7 +1146,6 @@ void setup() {
   connectWiFi();
   g_last_ntp_attempt_ms = millis();
   syncRTCWithNTP();
-  esp_task_wdt_delete(NULL);
 
   xTaskCreatePinnedToCore(sensorTask, "SensorTask", 8192, NULL, 3, &g_sensorTaskHandle, 1);
   xTaskCreatePinnedToCore(uploadTask, "UploadTask", 16384, NULL, 2, &g_uploadTaskHandle, 0);

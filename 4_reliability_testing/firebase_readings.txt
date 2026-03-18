@@ -1,0 +1,93 @@
+[
+  {
+    "ts": 2202226304,
+    "temperature_c": 30.6,
+    "humidity_pct": 52.8,
+    "batt_voltage_v": 0.0,
+    "batt_current_a": -0.001,
+    "soc_pct": 255,
+    "batt_internal_resistance_mohm": 0.0,
+    "_name": "projects/panahon-live/databases/(default)/documents/readings/reliability_station_1_2202226304_28a01066",
+    "_createTime": "2026-03-18T05:09:10.839760Z",
+    "_updateTime": "2026-03-18T05:09:10.839760Z",
+    "ts_iso_utc": "2039-10-14T17:31:44+00:00"
+  },
+  {
+    "ts": 2202226304,
+    "temperature_c": 30.6,
+    "humidity_pct": 53.7,
+    "batt_voltage_v": 0.0,
+    "batt_current_a": -0.001,
+    "soc_pct": 255,
+    "batt_internal_resistance_mohm": 0.0,
+    "_name": "projects/panahon-live/databases/(default)/documents/readings/reliability_station_1_2202226304_769afc95",
+    "_createTime": "2026-03-18T05:07:06.818826Z",
+    "_updateTime": "2026-03-18T05:07:06.818826Z",
+    "ts_iso_utc": "2039-10-14T17:31:44+00:00"
+  },
+  {
+    "ts": 2202226304,
+    "temperature_c": 30.6,
+    "humidity_pct": 53.4,
+    "batt_voltage_v": 0.0,
+    "batt_current_a": -0.001,
+    "soc_pct": 255,
+    "batt_internal_resistance_mohm": 0.0,
+    "_name": "projects/panahon-live/databases/(default)/documents/readings/reliability_station_1_2202226304_7ae14f5c",
+    "_createTime": "2026-03-18T05:05:01.897578Z",
+    "_updateTime": "2026-03-18T05:05:01.897578Z",
+    "ts_iso_utc": "2039-10-14T17:31:44+00:00"
+  },
+  {
+    "ts": 2202226304,
+    "temperature_c": 30.8,
+    "humidity_pct": 52.8,
+    "batt_voltage_v": 0.0,
+    "batt_current_a": -0.001,
+    "soc_pct": 255,
+    "batt_internal_resistance_mohm": 0.0,
+    "_name": "projects/panahon-live/databases/(default)/documents/readings/reliability_station_1_2202226304_fa8d5173",
+    "_createTime": "2026-03-18T05:11:15.107089Z",
+    "_updateTime": "2026-03-18T05:11:15.107089Z",
+    "ts_iso_utc": "2039-10-14T17:31:44+00:00"
+  },
+  {
+    "ts": 2239920360,
+    "temperature_c": 30.7,
+    "humidity_pct": 53.7,
+    "batt_voltage_v": 0.0,
+    "batt_current_a": -0.001,
+    "soc_pct": 255,
+    "batt_internal_resistance_mohm": 0.0,
+    "_name": "projects/panahon-live/databases/(default)/documents/readings/reliability_station_1_2239920360_7c752292",
+    "_createTime": "2026-03-18T05:08:08.731685Z",
+    "_updateTime": "2026-03-18T05:08:08.731685Z",
+    "ts_iso_utc": "2040-12-24T00:06:00+00:00"
+  },
+  {
+    "ts": 2240064480,
+    "temperature_c": 30.7,
+    "humidity_pct": 53.4,
+    "batt_voltage_v": 0.0,
+    "batt_current_a": -0.001,
+    "soc_pct": 255,
+    "batt_internal_resistance_mohm": 0.0,
+    "_name": "projects/panahon-live/databases/(default)/documents/readings/reliability_station_1_2240064480_c1c7b7ce",
+    "_createTime": "2026-03-18T05:10:12.814566Z",
+    "_updateTime": "2026-03-18T05:10:12.814566Z",
+    "ts_iso_utc": "2040-12-25T16:08:00+00:00"
+  },
+  {
+    "ts": 2313941504,
+    "temperature_c": 30.5,
+    "humidity_pct": 53.6,
+    "batt_voltage_v": 0.0,
+    "batt_current_a": -0.001,
+    "soc_pct": 255,
+    "batt_internal_resistance_mohm": 0.0,
+    "_name": "projects/panahon-live/databases/(default)/documents/readings/reliability_station_1_2313941504_03beb9bb",
+    "_createTime": "2026-03-18T05:06:04.529876Z",
+    "_updateTime": "2026-03-18T05:06:04.529876Z",
+    "ts_iso_utc": "2043-04-29T17:31:44+00:00"
+  }
+]
