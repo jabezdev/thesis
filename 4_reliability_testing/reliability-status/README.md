@@ -39,7 +39,6 @@ docker compose up -d --build
 
 For Dokploy/VPS deployment, set these environment variables in your app settings:
 
-- `FRONTEND_PORT` (optional, default `18080`)
 - `AUTH_PASSWORD` (required, strong password)
 - `SESSION_SECRET` (required, long random secret)
 - `AUTH_USERNAME` (optional, default `researcher`)
@@ -50,7 +49,13 @@ For Dokploy/VPS deployment, set these environment variables in your app settings
 
 Open:
 
-- Web UI: `http://<server-ip>:18080` (or your configured `FRONTEND_PORT`)
+- Web UI (Dokploy domain): `https://<your-domain>`
+
+Notes for Dokploy + Cloudflare:
+
+- This compose file does not publish a host port for frontend; traffic should come through Dokploy's reverse proxy.
+- Use the `frontend` service as the public service in Dokploy.
+- Cloudflare commonly proxies standard HTTP/HTTPS ports; avoiding custom origin ports prevents 404/hanging behavior caused by edge routing.
 
 ## Local Development
 
