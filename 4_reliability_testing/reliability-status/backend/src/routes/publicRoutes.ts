@@ -4,9 +4,12 @@ import { getChart, getCount, getLatestReading } from "../db";
 import { getClientIp, json, parseJson } from "../http";
 import { getPollerStatus, seedLatestNow } from "../poller";
 import { buildLatestPayload, getMetrics, isMetric } from "../services/payloads";
+import { normalizeApiPath } from "./path";
 
 export async function handlePublicRoute(req: Request, url: URL): Promise<Response | null> {
-  if (url.pathname === "/api/health") {
+  const path = normalizeApiPath(url.pathname);
+
+  if (path === "/api/health") {
     return json({
       ok: true,
       readingsStored: getCount(),
@@ -14,7 +17,7 @@ export async function handlePublicRoute(req: Request, url: URL): Promise<Respons
     });
   }
 
-  if (url.pathname === "/api/auth/login" && req.method === "POST") {
+  if (path === "/api/auth/login" && req.method === "POST") {
     const ip = getClientIp(req);
     const rate = checkRateLimit(ip);
     if (!rate.allowed) {
@@ -51,7 +54,7 @@ export async function handlePublicRoute(req: Request, url: URL): Promise<Respons
     );
   }
 
-  if (url.pathname === "/api/auth/session" && req.method === "GET") {
+  if (path === "/api/auth/session" && req.method === "GET") {
     const session = getSessionFromRequest(req);
     if (!session) {
       return json({ authenticated: false });
@@ -59,7 +62,7 @@ export async function handlePublicRoute(req: Request, url: URL): Promise<Respons
     return json({ authenticated: true, username: session.u });
   }
 
-  if (url.pathname === "/api/auth/logout" && req.method === "POST") {
+  if (path === "/api/auth/logout" && req.method === "POST") {
     return json(
       { ok: true },
       {
@@ -70,7 +73,7 @@ export async function handlePublicRoute(req: Request, url: URL): Promise<Respons
     );
   }
 
-  if (url.pathname === "/api/latest") {
+  if (path === "/api/latest") {
     if (!getLatestReading()) {
       try {
         await seedLatestNow();
@@ -97,7 +100,7 @@ export async function handlePublicRoute(req: Request, url: URL): Promise<Respons
     return json(payload);
   }
 
-  if (url.pathname === "/api/charts") {
+  if (path === "/api/charts") {
     const hours = Math.min(72, Math.max(1, Number(url.searchParams.get("hours") ?? 24)));
     const bucketMinutes = Math.min(30, Math.max(1, Number(url.searchParams.get("bucketMinutes") ?? 5)));
 

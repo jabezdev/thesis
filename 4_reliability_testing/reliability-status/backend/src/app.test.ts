@@ -33,4 +33,17 @@ describe("API smoke tests", () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("Unauthorized");
   });
+
+  test("GET /api/latest/ with trailing slash remains public", async () => {
+    const res = await fetchApp(new Request("http://localhost/api/latest/"));
+    expect(res.status).toBe(200);
+  });
+
+  test("GET unknown api route returns 404 instead of unauthorized", async () => {
+    const res = await fetchApp(new Request("http://localhost/api/not-real"));
+    expect(res.status).toBe(404);
+
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("Not found");
+  });
 });
