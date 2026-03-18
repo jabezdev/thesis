@@ -39,12 +39,22 @@ export async function initializeFirebase() {
   }
 
   if (!credential) {
+    if (!projectId) {
+      throw new Error(
+        '[firebase] missing project id and service-account credentials. ' +
+          'Set FIREBASE_PROJECT_ID and provide either FIREBASE_SERVICE_ACCOUNT_JSON or a valid FIREBASE_SERVICE_ACCOUNT_PATH.',
+      );
+    }
+
     credential = admin.credential.applicationDefault();
 
-    if (!projectId) {
-      console.warn(
-        '[firebase] using application default credentials without FIREBASE_PROJECT_ID. ' +
-          'Firestore calls may fail with "Unable to detect a Project Id" outside Google Cloud.',
+    try {
+      await credential.getAccessToken();
+    } catch {
+      throw new Error(
+        '[firebase] no usable credentials found. ' +
+          'Provide FIREBASE_SERVICE_ACCOUNT_JSON or mount a service account file to FIREBASE_SERVICE_ACCOUNT_PATH ' +
+          '(for Docker Compose: ./secrets/firebase-service-account.json -> /run/secrets/firebase-service-account.json).',
       );
     }
   }

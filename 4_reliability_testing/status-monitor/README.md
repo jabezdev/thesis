@@ -33,6 +33,12 @@ Backend requirements:
 - Set either `FIREBASE_SERVICE_ACCOUNT_PATH` (mounted JSON file) or `FIREBASE_SERVICE_ACCOUNT_JSON`.
 - If the service account file path is configured but the file is not mounted, backend falls back to application default credentials, which usually fails in local Docker unless `FIREBASE_PROJECT_ID` and valid ADC are available.
 
+Local Docker quick setup (file-based):
+
+- Create `status-monitor/secrets/firebase-service-account.json` with your Firebase service account key JSON.
+- Keep `FIREBASE_SERVICE_ACCOUNT_PATH=/run/secrets/firebase-service-account.json` in `.env`.
+- Start with `docker compose up --build` from `status-monitor/`.
+
 ## Run With Docker
 
 ```bash
