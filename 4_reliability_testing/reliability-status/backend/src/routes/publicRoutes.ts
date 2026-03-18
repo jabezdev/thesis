@@ -4,12 +4,12 @@ import { getChart, getCount, getLatestReading } from "../db";
 import { getClientIp, json, parseJson } from "../http";
 import { getPollerStatus, seedLatestNow } from "../poller";
 import { buildLatestPayload, getMetrics, isMetric } from "../services/payloads";
-import { canonicalApiPath } from "./path";
+import { canonicalApiPath, matchesApiLogicalPath } from "./path";
 
 export async function handlePublicRoute(req: Request, url: URL): Promise<Response | null> {
   const path = canonicalApiPath(url.pathname);
 
-  if (path === "/api/health") {
+  if (matchesApiLogicalPath(path, "/health")) {
     return json({
       ok: true,
       readingsStored: getCount(),
@@ -17,7 +17,7 @@ export async function handlePublicRoute(req: Request, url: URL): Promise<Respons
     });
   }
 
-  if (path === "/api/auth/login" && req.method === "POST") {
+  if (matchesApiLogicalPath(path, "/auth/login") && req.method === "POST") {
     const ip = getClientIp(req);
     const rate = checkRateLimit(ip);
     if (!rate.allowed) {
@@ -54,7 +54,7 @@ export async function handlePublicRoute(req: Request, url: URL): Promise<Respons
     );
   }
 
-  if (path === "/api/auth/session" && req.method === "GET") {
+  if (matchesApiLogicalPath(path, "/auth/session") && req.method === "GET") {
     const session = getSessionFromRequest(req);
     if (!session) {
       return json({ authenticated: false });
@@ -62,7 +62,7 @@ export async function handlePublicRoute(req: Request, url: URL): Promise<Respons
     return json({ authenticated: true, username: session.u });
   }
 
-  if (path === "/api/auth/logout" && req.method === "POST") {
+  if (matchesApiLogicalPath(path, "/auth/logout") && req.method === "POST") {
     return json(
       { ok: true },
       {
@@ -73,7 +73,7 @@ export async function handlePublicRoute(req: Request, url: URL): Promise<Respons
     );
   }
 
-  if (path === "/api/latest") {
+  if (matchesApiLogicalPath(path, "/latest")) {
     if (!getLatestReading()) {
       try {
         await seedLatestNow();
@@ -100,7 +100,7 @@ export async function handlePublicRoute(req: Request, url: URL): Promise<Respons
     return json(payload);
   }
 
-  if (path === "/api/charts") {
+  if (matchesApiLogicalPath(path, "/charts")) {
     const hours = Math.min(72, Math.max(1, Number(url.searchParams.get("hours") ?? 24)));
     const bucketMinutes = Math.min(30, Math.max(1, Number(url.searchParams.get("bucketMinutes") ?? 5)));
 
