@@ -27,6 +27,12 @@ The monitor infers the sampling interval from the Firestore sample timestamps an
 
 Copy `.env.example` to `.env` and fill in the values for your Firebase project.
 
+Backend requirements:
+
+- `FIREBASE_PROJECT_ID` must be set (for example `panahon-live`).
+- Set either `FIREBASE_SERVICE_ACCOUNT_PATH` (mounted JSON file) or `FIREBASE_SERVICE_ACCOUNT_JSON`.
+- If the service account file path is configured but the file is not mounted, backend falls back to application default credentials, which usually fails in local Docker unless `FIREBASE_PROJECT_ID` and valid ADC are available.
+
 ## Run With Docker
 
 ```bash
