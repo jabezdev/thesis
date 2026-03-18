@@ -4,7 +4,7 @@ services:
       context: ./backend
     restart: unless-stopped
     environment:
-      PORT: ${PORT:-3000}
+      PORT: ${PORT:-3100}
       POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-15000}
       STATION_ID: ${STATION_ID:-reliability_station_1}
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:?set_FIREBASE_PROJECT_ID}
@@ -21,7 +21,7 @@ services:
     volumes:
       - sqlite_data:/data
     expose:
-      - "3000"
+      - "3100"
     networks:
       reliability_net:
         aliases:
@@ -33,7 +33,7 @@ services:
       context: ./frontend
     restart: unless-stopped
     environment:
-      BACKEND_UPSTREAM: ${BACKEND_UPSTREAM:-backend:3000}
+      BACKEND_UPSTREAM: ${BACKEND_UPSTREAM:-reliability-backend:3100}
     depends_on:
       - backend
     expose:
