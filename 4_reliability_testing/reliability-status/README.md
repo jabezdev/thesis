@@ -103,6 +103,12 @@ Access model:
 - `GET /api/export/readings.csv?hours=24`
 - `GET /api/export/charts.csv?hours=24&bucketMinutes=5`
 
+Troubleshooting ingestion:
+
+- Open `/api/health` and check `poller.lastError` and `poller.lastSuccessAt`.
+- If `readingsStored` stays `0` and `lastError` is non-null, the backend cannot pull Firestore from your deployment environment.
+- Common causes: blocked outbound DNS/HTTPS from VPS container network, missing/overridden `FIREBASE_API_KEY`, or wrong `FIREBASE_PROJECT_ID`.
+
 ## Persistence
 
 SQLite DB path in container: `/data/reliability.db`

@@ -8,6 +8,7 @@ import {
   getRecentReadings
 } from "./db";
 import { startPoller } from "./poller";
+import { getPollerStatus } from "./poller";
 import {
   checkRateLimit,
   clearFailedAttempts,
@@ -330,7 +331,11 @@ Bun.serve({
     }
 
     if (url.pathname === "/api/health") {
-      return json({ ok: true });
+      return json({
+        ok: true,
+        readingsStored: getCount(),
+        poller: getPollerStatus()
+      });
     }
 
     if (url.pathname === "/api/auth/login" && req.method === "POST") {
