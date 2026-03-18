@@ -1,0 +1,9 @@
+backend/node_modules/
+frontend/node_modules/
+backend/*.tsbuildinfo
+frontend/*.tsbuildinfo
+frontend/dist/
+.env
+.env.local
+data/
+secrets/

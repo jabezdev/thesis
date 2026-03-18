@@ -1,0 +1,18 @@
+{
+  "rules": {
+    "status": {
+      ".read": true,
+      ".write": false,
+      "current": {
+        ".read": true,
+        ".write": false
+      },
+      "heartbeat-history": {
+        ".read": true,
+        ".write": false
+      }
+    },
+    ".read": false,
+    ".write": false
+  }
+}

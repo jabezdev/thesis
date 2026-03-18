@@ -1,0 +1,35 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    environment:
+      PORT: 3001
+      FIREBASE_DATABASE_URL: ${FIREBASE_DATABASE_URL}
+      FIREBASE_SERVICE_ACCOUNT_PATH: /run/secrets/firebase-service-account.json
+      FIRESTORE_READINGS_COLLECTION: ${FIRESTORE_READINGS_COLLECTION:-readings}
+      FIRESTORE_HEARTBEATS_COLLECTION: ${FIRESTORE_HEARTBEATS_COLLECTION:-heartbeats}
+      FIRESTORE_HEARTBEAT_DOC_ID: ${FIRESTORE_HEARTBEAT_DOC_ID:-reliability_station_1}
+      EXPECTED_PACKET_INTERVAL_SECONDS: ${EXPECTED_PACKET_INTERVAL_SECONDS:-60}
+      HEARTBEAT_HISTORY_LIMIT: ${HEARTBEAT_HISTORY_LIMIT:-200}
+      RTDB_STATUS_PATH: ${RTDB_STATUS_PATH:-status/current}
+      RTDB_HEARTBEAT_HISTORY_PATH: ${RTDB_HEARTBEAT_HISTORY_PATH:-status/heartbeat-history}
+      STATUS_DATA_DIR: /data
+    volumes:
+      - ./data/backend:/data
+      - ./secrets:/run/secrets:ro
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY}
+        VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN}
+        VITE_FIREBASE_DATABASE_URL: ${VITE_FIREBASE_DATABASE_URL}
+        VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-panahon-live}
+        VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID}
+    ports:
+      - "8080:80"
+    restart: unless-stopped
