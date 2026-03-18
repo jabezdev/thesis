@@ -97,7 +97,10 @@ function num(value: number | null | undefined, digits = 2): string {
 }
 
 async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(path, { credentials: "include" });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 10000);
+  const res = await fetch(path, { credentials: "include", signal: controller.signal });
+  clearTimeout(timeout);
   if (!res.ok) {
     throw new Error(`${res.status}`);
   }
@@ -110,6 +113,7 @@ export default function App() {
   const [charts, setCharts] = useState<ChartResponse | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
+  const [bootError, setBootError] = useState("");
   const [username, setUsername] = useState("researcher");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -125,8 +129,10 @@ export default function App() {
       try {
         const session = await apiGet<{ authenticated: boolean }>("/api/auth/session");
         setAuthenticated(session.authenticated);
+        setBootError("");
       } catch {
         setAuthenticated(false);
+        setBootError("Unable to reach backend API through /api. Check Dokploy service routing and backend status.");
       } finally {
         setAuthChecked(true);
       }
@@ -269,6 +275,7 @@ export default function App() {
           />
 
           {loginError ? <p className="mt-3 text-sm text-rose-300">{loginError}</p> : null}
+          {bootError ? <p className="mt-2 text-sm text-amber-300">{bootError}</p> : null}
 
           <button className="mt-4 w-full rounded-xl bg-sky-500 px-4 py-2 font-semibold text-slate-950" type="submit">
             Sign In

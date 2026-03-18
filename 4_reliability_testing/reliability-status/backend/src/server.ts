@@ -318,6 +318,7 @@ if (config.sessionSecret === "change-this-secret") {
 }
 
 Bun.serve({
+  hostname: "0.0.0.0",
   port: config.port,
   async fetch(req) {
     const url = new URL(req.url);
