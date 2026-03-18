@@ -29,22 +29,53 @@ void setup() {
 
   WiFi.begin(SSID, PASS);
   Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
+  unsigned long startConnect = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startConnect < 20000) {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("\nConnected!");
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nConnected!");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("RSSI: ");
+    Serial.println(WiFi.RSSI());
+    
+    // DNS Check
+    IPAddress ntpIP;
+    if (WiFi.hostByName(NTP_SERVER, ntpIP)) {
+      Serial.printf("DNS OK: %s resolved to %s\n", NTP_SERVER, ntpIP.toString().c_str());
+    } else {
+      Serial.printf("DNS FAILED: Could not resolve %s\n", NTP_SERVER);
+    }
+  } else {
+    Serial.println("\nWiFi Connection Failed.");
+    return;
+  }
 
-  configTime(GMT_OFFSET_SEC, 0, NTP_SERVER);
+  // Use multiple NTP servers for redundancy
+  configTime(GMT_OFFSET_SEC, 0, NTP_SERVER, "time.google.com", "time.nist.gov");
   
   Serial.println("Waiting for NTP sync...");
   struct tm timeinfo;
-  if (getLocalTime(&timeinfo)) {
+  bool synced = false;
+  for (int i = 0; i < 30; i++) { // 15 seconds total (30 * 500ms)
+    if (getLocalTime(&timeinfo)) {
+      synced = true;
+      break;
+    }
+    delay(500);
+    Serial.print(".");
+  }
+
+  if (synced) {
+    Serial.println("\nNTP Sync Successful.");
     rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
                         timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
     Serial.println("RTC Adjusted to NTP time.");
   } else {
-    Serial.println("NTP Sync Failed.");
+    Serial.println("\nNTP Sync Failed after multiple retries.");
   }
 
   DateTime now = rtc.now();
