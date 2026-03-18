@@ -18,6 +18,7 @@ import {
   sessionCookie,
   verifyCredentials
 } from "./auth";
+import { csv, getClientIp, json, parseJson, text } from "./http";
 
 const METRICS = ["t", "h", "bv", "bi", "soc", "ir"] as const;
 
@@ -74,38 +75,6 @@ type LatestEnvelope = {
   backendTimeIso: string;
 };
 
-function json(data: unknown, init?: ResponseInit): Response {
-  return new Response(JSON.stringify(data), {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      "access-control-allow-origin": "*",
-      "access-control-allow-methods": "GET,OPTIONS",
-      "access-control-allow-headers": "content-type",
-      ...(init?.headers ?? {})
-    }
-  });
-}
-
-function csv(data: string, filename: string): Response {
-  return new Response(data, {
-    headers: {
-      "content-type": "text/csv; charset=utf-8",
-      "content-disposition": `attachment; filename="${filename}"`,
-      "cache-control": "no-store"
-    }
-  });
-}
-
-function text(data: string, init?: ResponseInit): Response {
-  return new Response(data, {
-    ...init,
-    headers: {
-      "content-type": "text/plain; charset=utf-8",
-      ...(init?.headers ?? {})
-    }
-  });
-}
 
 function escapeCsvValue(value: unknown): string {
   if (value === null || value === undefined) {
@@ -201,22 +170,6 @@ function detectAnomalies(packetAgeSec: number | null, heartbeatTimestamp: string
       heartbeatAgeSec
     }
   };
-}
-
-async function parseJson<T>(req: Request): Promise<T | null> {
-  try {
-    return (await req.json()) as T;
-  } catch {
-    return null;
-  }
-}
-
-function getClientIp(req: Request): string {
-  const forwarded = req.headers.get("x-forwarded-for");
-  if (!forwarded) {
-    return "unknown";
-  }
-  return forwarded.split(",")[0]?.trim() || "unknown";
 }
 
 function buildLatestPayload(): LatestEnvelope {

@@ -1,72 +1,7 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { Sparkline } from "./components/Sparkline";
 import { StatCard } from "./components/StatCard";
-
-type LatestPacket = {
-  ts: number;
-  t: number | null;
-  h: number | null;
-  bv: number | null;
-  bi: number | null;
-  soc: number | null;
-  ir: number | null;
-  fetchedAt: string;
-  packetIso: string;
-  packetAgeSec: number;
-  elapsedSinceReceivedSec: number | null;
-};
-
-type LatestResponse = {
-  latestPacket: LatestPacket | null;
-  heartbeat: {
-    pendingRows: number | null;
-    lastHttp: number | null;
-    sdFault: number | null;
-    sdOk: number | null;
-    timestamp: string | null;
-  } | null;
-  anomalies: {
-    heartbeatSingleDocMode: true;
-    expectedPacketIntervalSec: number;
-    packetStale: boolean;
-    longPacketGap: boolean;
-    cadenceIrregular: boolean;
-    heartbeatStale: boolean;
-    severity: "ok" | "warn" | "critical";
-    flags: string[];
-    details: {
-      latestGapSec: number | null;
-      medianGapSec: number | null;
-      maxGapSec: number | null;
-      heartbeatAgeSec: number | null;
-    };
-  };
-  message?: string;
-  poller?: {
-    ticks: number;
-    lastSuccessAt: string | null;
-    lastErrorAt: string | null;
-    lastError: string | null;
-  };
-};
-
-type ChartPoint = {
-  bucketTs: number;
-  avg: number | null;
-  min: number | null;
-  max: number | null;
-};
-
-type ChartResponse = {
-  hours: number;
-  bucketMinutes: number;
-  t: ChartPoint[];
-  h: ChartPoint[];
-  bv: ChartPoint[];
-  bi: ChartPoint[];
-  soc: ChartPoint[];
-  ir: ChartPoint[];
-};
+import { useReliabilityDashboard } from "./hooks/useReliabilityDashboard";
 
 const metricMeta = [
   { key: "t", label: "Temperature", unit: "C", color: "#f97316" },
@@ -103,167 +38,31 @@ function num(value: number | null | undefined, digits = 2): string {
   return Number(value).toFixed(digits);
 }
 
-async function apiGet<T>(path: string): Promise<T> {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 10000);
-  try {
-    const res = await fetch(path, { credentials: "include", signal: controller.signal });
-    if (!res.ok) {
-      throw new Error(`${res.status}`);
-    }
-    return (await res.json()) as T;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 export default function App() {
   const [tab, setTab] = useState<Tab>("status");
-  const [latest, setLatest] = useState<LatestResponse | null>(null);
-  const [charts, setCharts] = useState<ChartResponse | null>(null);
-  const [authChecked, setAuthChecked] = useState(false);
-  const [authenticated, setAuthenticated] = useState(false);
-  const [bootError, setBootError] = useState("");
-  const [username, setUsername] = useState("researcher");
-  const [password, setPassword] = useState("");
-  const [loginError, setLoginError] = useState("");
-  const [latestError, setLatestError] = useState("");
-  const [chartsError, setChartsError] = useState("");
-  const [tick, setTick] = useState(Date.now());
-
-  useEffect(() => {
-    const id = window.setInterval(() => setTick(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  useEffect(() => {
-    const boot = async () => {
-      try {
-        const session = await apiGet<{ authenticated: boolean }>("/api/auth/session");
-        setAuthenticated(session.authenticated);
-        setBootError("");
-      } catch (error) {
-        const code = (error as Error).message;
-        setAuthenticated(false);
-
-        if (code === "401" || code === "403") {
-          setBootError(
-            "API returned Unauthorized for /api/auth/session. This usually means /api is routed to the wrong service or protected by a gateway/auth proxy."
-          );
-          return;
-        }
-
-        // Endpoint missing usually means stale backend deploy, not network outage.
-        if (code === "404") {
-          setBootError("Backend is reachable, but /api/auth/session is missing. Redeploy backend service.");
-          return;
-        }
-
-        setBootError("Unable to reach backend API through /api. Check Dokploy service routing and backend status.");
-      } finally {
-        setAuthChecked(true);
-      }
-    };
-
-    void boot();
-  }, []);
-
-  useEffect(() => {
-    const fetchLatest = async () => {
-      try {
-        const data = await apiGet<LatestResponse>("/api/latest");
-        setLatest(data);
-        setLatestError("");
-      } catch (error) {
-        const code = (error as Error).message;
-        if (code === "401" || code === "403") {
-          setLatestError("API returned Unauthorized for /api/latest. Check Dokploy/Cloudflare route protection and ensure /api proxies to backend.");
-          return;
-        }
-        setLatestError(code === "404" ? "Endpoint /api/latest is missing on backend." : `Unable to fetch latest packet from backend (HTTP ${code}).`);
-      }
-    };
-
-    void fetchLatest();
-    const id = window.setInterval(() => {
-      void fetchLatest();
-    }, 10000);
-
-    return () => clearInterval(id);
-  }, []);
-
-  useEffect(() => {
-    const fetchCharts = async () => {
-      try {
-        const data = await apiGet<ChartResponse>("/api/charts?hours=24&bucketMinutes=5");
-        setCharts(data);
-        setChartsError("");
-      } catch (error) {
-        const code = (error as Error).message;
-        if (code === "401" || code === "403") {
-          setChartsError("API returned Unauthorized for /api/charts. Check Dokploy/Cloudflare route protection and ensure /api proxies to backend.");
-          return;
-        }
-        setChartsError(code === "404" ? "Endpoint /api/charts is missing on backend." : `Unable to fetch chart aggregates from backend (HTTP ${code}).`);
-      }
-    };
-
-    void fetchCharts();
-    const id = window.setInterval(() => {
-      void fetchCharts();
-    }, 30000);
-
-    return () => clearInterval(id);
-  }, []);
-
-  const packet = latest?.latestPacket ?? null;
-  const elapsedSinceReceive = useMemo(() => {
-    if (!packet) {
-      return null;
-    }
-    const receivedMs = Date.parse(packet.fetchedAt);
-    if (!Number.isFinite(receivedMs)) {
-      return packet.elapsedSinceReceivedSec;
-    }
-    return Math.floor((tick - receivedMs) / 1000);
-  }, [packet, tick]);
+  const {
+    authChecked,
+    authenticated,
+    bootError,
+    latestError,
+    chartsError,
+    loginError,
+    latest,
+    charts,
+    packet,
+    elapsedSinceReceive,
+    username,
+    password,
+    setUsername,
+    setPassword,
+    onLogin,
+    onLogout
+  } = useReliabilityDashboard();
 
   const anomaly = latest?.anomalies;
 
-  const onLogin = async (event: FormEvent) => {
-    event.preventDefault();
-    setLoginError("");
-
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ username, password })
-    });
-
-    if (!res.ok) {
-      if (res.status === 429) {
-        setLoginError("Too many attempts. Please wait and try again.");
-      } else {
-        setLoginError("Invalid credentials.");
-      }
-      return;
-    }
-
-    setPassword("");
-    setAuthenticated(true);
-    setLatest(null);
-    setCharts(null);
-  };
-
-  const onLogout = async () => {
-    await fetch("/api/auth/logout", {
-      method: "POST",
-      credentials: "include"
-    });
-    setAuthenticated(false);
-    setLatest(null);
-    setCharts(null);
+  const handleLogin = async (event: FormEvent) => {
+    await onLogin(event);
   };
 
   if (!authChecked) {
@@ -309,7 +108,7 @@ export default function App() {
         </div>
       ) : (
         <form
-          onSubmit={onLogin}
+          onSubmit={handleLogin}
           className="mt-3 rounded-2xl border border-slate-700/80 bg-slate-900/60 p-4 shadow-xl"
         >
           <p className="text-xs uppercase tracking-[0.2em] text-sky-300">Restricted Actions</p>
