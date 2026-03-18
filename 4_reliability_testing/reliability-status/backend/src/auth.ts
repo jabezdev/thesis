@@ -34,7 +34,10 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 export async function verifyCredentials(username: string, password: string): Promise<boolean> {
-  if (!safeEqual(username, config.authUsername)) {
+  const normalizedInputUser = username.trim().toLowerCase();
+  const normalizedConfigUser = config.authUsername.trim().toLowerCase();
+
+  if (!safeEqual(normalizedInputUser, normalizedConfigUser)) {
     return false;
   }
 
