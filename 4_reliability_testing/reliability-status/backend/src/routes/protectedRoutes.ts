@@ -1,10 +1,10 @@
 import { getSessionFromRequest } from "../auth";
 import { buildChartsCsv, buildReadingsCsv, isMetric } from "../services/payloads";
 import { csv, json, text } from "../http";
-import { normalizeApiPath } from "./path";
+import { canonicalApiPath } from "./path";
 
 export async function handleProtectedRoute(req: Request, url: URL): Promise<Response | null> {
-  const path = normalizeApiPath(url.pathname);
+  const path = canonicalApiPath(url.pathname);
   const protectedRoute = path === "/api/export/readings.csv" || path === "/api/export/charts.csv";
   if (!protectedRoute) {
     return null;

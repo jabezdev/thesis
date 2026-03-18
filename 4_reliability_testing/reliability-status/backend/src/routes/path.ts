@@ -4,3 +4,9 @@ export function normalizeApiPath(pathname: string): string {
   }
   return pathname;
 }
+
+export function canonicalApiPath(pathname: string): string {
+  const normalized = normalizeApiPath(pathname);
+  const withPrefix = normalized === "/api" || normalized.startsWith("/api/") ? normalized : `/api${normalized}`;
+  return normalizeApiPath(withPrefix);
+}

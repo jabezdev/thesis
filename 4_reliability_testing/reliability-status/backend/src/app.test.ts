@@ -39,6 +39,19 @@ describe("API smoke tests", () => {
     expect(res.status).toBe(200);
   });
 
+  test("GET /latest works when upstream strips /api prefix", async () => {
+    const res = await fetchApp(new Request("http://localhost/latest"));
+    expect(res.status).toBe(200);
+  });
+
+  test("GET /auth/session works when upstream strips /api prefix", async () => {
+    const res = await fetchApp(new Request("http://localhost/auth/session"));
+    expect(res.status).toBe(200);
+
+    const body = (await res.json()) as { authenticated: boolean };
+    expect(body.authenticated).toBe(false);
+  });
+
   test("GET unknown api route returns 404 instead of unauthorized", async () => {
     const res = await fetchApp(new Request("http://localhost/api/not-real"));
     expect(res.status).toBe(404);

@@ -4,10 +4,10 @@ import { getChart, getCount, getLatestReading } from "../db";
 import { getClientIp, json, parseJson } from "../http";
 import { getPollerStatus, seedLatestNow } from "../poller";
 import { buildLatestPayload, getMetrics, isMetric } from "../services/payloads";
-import { normalizeApiPath } from "./path";
+import { canonicalApiPath } from "./path";
 
 export async function handlePublicRoute(req: Request, url: URL): Promise<Response | null> {
-  const path = normalizeApiPath(url.pathname);
+  const path = canonicalApiPath(url.pathname);
 
   if (path === "/api/health") {
     return json({
