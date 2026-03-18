@@ -6,6 +6,7 @@ COPY package.json ./
 RUN bun install
 
 COPY index.html ./
+COPY vite-env.d.ts ./
 COPY tsconfig.json ./
 COPY tsconfig.app.json ./
 COPY tsconfig.node.json ./

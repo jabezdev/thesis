@@ -1,10 +1,10 @@
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
-interface MetricChartProps {
+interface MetricChartProps<T extends { label: string }> {
   title: string;
   subtitle: string;
-  data: Array<Record<string, string | number | null>>;
-  valueKey: string;
+  data: T[];
+  valueKey: Extract<keyof T, string>;
   accent: string;
   unit: string;
 }
@@ -18,7 +18,7 @@ function formatValue(value: unknown, unit: string) {
   return `${rounded}${unit}`;
 }
 
-export function MetricChart({ title, subtitle, data, valueKey, accent, unit }: MetricChartProps) {
+export function MetricChart<T extends { label: string }>({ title, subtitle, data, valueKey, accent, unit }: MetricChartProps<T>) {
   return (
     <section className="panel chart-panel">
       <div className="panel-heading">
