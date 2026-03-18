@@ -41,6 +41,13 @@ type LatestResponse = {
       heartbeatAgeSec: number | null;
     };
   };
+  message?: string;
+  poller?: {
+    ticks: number;
+    lastSuccessAt: string | null;
+    lastErrorAt: string | null;
+    lastError: string | null;
+  };
 };
 
 type ChartPoint = {
@@ -120,6 +127,8 @@ export default function App() {
   const [username, setUsername] = useState("researcher");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [latestError, setLatestError] = useState("");
+  const [chartsError, setChartsError] = useState("");
   const [tick, setTick] = useState(Date.now());
 
   useEffect(() => {
@@ -163,8 +172,10 @@ export default function App() {
       try {
         const data = await apiGet<LatestResponse>("/api/latest");
         setLatest(data);
-      } catch {
-        // Keep previous data when transient API errors happen.
+        setLatestError("");
+      } catch (error) {
+        const code = (error as Error).message;
+        setLatestError(code === "404" ? "Endpoint /api/latest is missing on backend." : "Unable to fetch latest packet from backend.");
       }
     };
 
@@ -181,8 +192,10 @@ export default function App() {
       try {
         const data = await apiGet<ChartResponse>("/api/charts?hours=24&bucketMinutes=5");
         setCharts(data);
-      } catch {
-        // Keep previous chart data when transient API errors happen.
+        setChartsError("");
+      } catch (error) {
+        const code = (error as Error).message;
+        setChartsError(code === "404" ? "Endpoint /api/charts is missing on backend." : "Unable to fetch chart aggregates from backend.");
       }
     };
 
@@ -344,6 +357,24 @@ export default function App() {
 
       {tab === "status" ? (
         <section className="mt-4 space-y-3">
+          {latestError ? (
+            <div className="rounded-2xl border border-rose-500/40 bg-rose-950/40 p-3 text-sm text-rose-200">{latestError}</div>
+          ) : null}
+          {!packet && latest?.message ? (
+            <div className="rounded-2xl border border-amber-500/40 bg-amber-950/40 p-3 text-sm text-amber-100">
+              <p>{latest.message}</p>
+              {latest.poller?.lastError ? (
+                <p className="mt-1 text-amber-200/90">
+                  Poller error: {latest.poller.lastError}
+                  {latest.poller.lastErrorAt ? ` (at ${new Date(latest.poller.lastErrorAt).toLocaleString()})` : ""}
+                </p>
+              ) : latest.poller?.lastSuccessAt ? (
+                <p className="mt-1 text-amber-200/90">Last poller success: {new Date(latest.poller.lastSuccessAt).toLocaleString()}</p>
+              ) : (
+                <p className="mt-1 text-amber-200/90">Poller has not completed a successful sync yet.</p>
+              )}
+            </div>
+          ) : null}
           <StatCard
             label="Anomaly Status"
             value={(anomaly?.severity ?? "ok").toUpperCase()}
@@ -388,6 +419,9 @@ export default function App() {
         </section>
       ) : (
         <section className="mt-4 space-y-3">
+          {chartsError ? (
+            <div className="rounded-2xl border border-rose-500/40 bg-rose-950/40 p-3 text-sm text-rose-200">{chartsError}</div>
+          ) : null}
           <p className="text-sm text-slate-300">
             Showing pre-aggregated averages for the last {charts?.hours ?? 24} hours in {charts?.bucketMinutes ?? 5}-minute buckets.
           </p>

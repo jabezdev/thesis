@@ -65,6 +65,12 @@ type LatestEnvelope = {
       heartbeatAgeSec: number | null;
     };
   };
+  poller?: {
+    lastSuccessAt: string | null;
+    lastErrorAt: string | null;
+    lastError: string | null;
+    ticks: number;
+  };
   backendTimeIso: string;
 };
 
@@ -403,8 +409,18 @@ Bun.serve({
       }
 
       const payload = buildLatestPayload();
+      const poller = getPollerStatus();
       if (!payload.latestPacket) {
-        return json({ ...payload, message: "Waiting for first packet" });
+        return json({
+          ...payload,
+          poller: {
+            ticks: poller.ticks,
+            lastSuccessAt: poller.lastSuccessAt,
+            lastErrorAt: poller.lastErrorAt,
+            lastError: poller.lastError
+          },
+          message: "Waiting for first packet"
+        });
       }
       return json(payload);
     }
