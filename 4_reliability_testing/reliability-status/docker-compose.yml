@@ -20,15 +20,30 @@ services:
       MAX_CSV_ROWS: ${MAX_CSV_ROWS:-50000}
     volumes:
       - sqlite_data:/data
+    expose:
+      - "3000"
+    networks:
+      reliability_net:
+        aliases:
+          - backend
+          - reliability-backend
 
   frontend:
     build:
       context: ./frontend
     restart: unless-stopped
+    environment:
+      BACKEND_UPSTREAM: ${BACKEND_UPSTREAM:-backend:3000}
     depends_on:
       - backend
     expose:
       - "80"
+    networks:
+      - reliability_net
 
 volumes:
   sqlite_data:
+
+networks:
+  reliability_net:
+    driver: bridge
