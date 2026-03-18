@@ -2,6 +2,7 @@ export function json(data: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(data), {
     ...init,
     headers: {
+      "x-reliability-status-backend": "true",
       "content-type": "application/json",
       "access-control-allow-origin": "*",
       "access-control-allow-methods": "GET,OPTIONS",
@@ -14,6 +15,7 @@ export function json(data: unknown, init?: ResponseInit): Response {
 export function csv(data: string, filename: string): Response {
   return new Response(data, {
     headers: {
+      "x-reliability-status-backend": "true",
       "content-type": "text/csv; charset=utf-8",
       "content-disposition": `attachment; filename=\"${filename}\"`,
       "cache-control": "no-store"
@@ -25,6 +27,7 @@ export function text(data: string, init?: ResponseInit): Response {
   return new Response(data, {
     ...init,
     headers: {
+      "x-reliability-status-backend": "true",
       "content-type": "text/plain; charset=utf-8",
       ...(init?.headers ?? {})
     }

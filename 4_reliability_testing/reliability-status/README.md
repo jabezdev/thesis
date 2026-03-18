@@ -67,6 +67,12 @@ bun install
 bun run dev
 ```
 
+Run backend smoke tests:
+
+```bash
+bun run test
+```
+
 ### Frontend
 
 ```bash
@@ -114,3 +120,17 @@ Troubleshooting ingestion:
 SQLite DB path in container: `/data/reliability.db`
 
 Docker volume name: `sqlite_data`
+
+## Internal Architecture
+
+- Frontend
+  - API transport: `frontend/src/lib/http.ts`
+  - API endpoints: `frontend/src/api/reliabilityApi.ts`
+  - Dashboard state/polling orchestration: `frontend/src/hooks/useReliabilityDashboard.ts`
+  - Presentation shell: `frontend/src/App.tsx`
+- Backend
+  - App router entry: `backend/src/app.ts`
+  - Public routes: `backend/src/routes/publicRoutes.ts`
+  - Session-protected routes: `backend/src/routes/protectedRoutes.ts`
+  - Payload/CSV builders: `backend/src/services/payloads.ts`
+  - HTTP response helpers: `backend/src/http.ts`

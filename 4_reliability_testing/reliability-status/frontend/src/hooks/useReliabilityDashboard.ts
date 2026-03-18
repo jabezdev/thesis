@@ -4,9 +4,12 @@ import { HttpError } from "../lib/http";
 import type { ChartResponse, LatestPacket, LatestResponse } from "../types/api";
 import { useInterval } from "./useInterval";
 
-function toApiIssueMessage(status: number, route: string, fallback: string): string {
+function toApiIssueMessage(status: number, route: string, fallback: string, isReliabilityBackend: boolean): string {
   if (status === 401 || status === 403) {
-    return `API returned Unauthorized for ${route}. Check reverse proxy routing and access policy.`;
+    if (!isReliabilityBackend) {
+      return `API returned Unauthorized for ${route} from a non-reliability backend. /api is routed to a different service or gateway.`;
+    }
+    return `API returned Unauthorized for ${route} from reliability-status backend. Check route auth rules.`;
   }
   if (status === 404) {
     return `Endpoint ${route} is missing on backend.`;
@@ -61,7 +64,8 @@ export function useReliabilityDashboard(): DashboardState {
         toApiIssueMessage(
           status,
           "/api/auth/session",
-          "Unable to read session state from backend"
+          "Unable to read session state from backend",
+          error instanceof HttpError ? error.isReliabilityBackend : false
         )
       );
     } finally {
@@ -76,7 +80,14 @@ export function useReliabilityDashboard(): DashboardState {
       setLatestError("");
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 0;
-      setLatestError(toApiIssueMessage(status, "/api/latest", "Unable to fetch latest packet from backend"));
+      setLatestError(
+        toApiIssueMessage(
+          status,
+          "/api/latest",
+          "Unable to fetch latest packet from backend",
+          error instanceof HttpError ? error.isReliabilityBackend : false
+        )
+      );
     }
   }, []);
 
@@ -87,7 +98,14 @@ export function useReliabilityDashboard(): DashboardState {
       setChartsError("");
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 0;
-      setChartsError(toApiIssueMessage(status, "/api/charts", "Unable to fetch chart aggregates from backend"));
+      setChartsError(
+        toApiIssueMessage(
+          status,
+          "/api/charts",
+          "Unable to fetch chart aggregates from backend",
+          error instanceof HttpError ? error.isReliabilityBackend : false
+        )
+      );
     }
   }, []);
 

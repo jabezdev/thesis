@@ -1,12 +1,16 @@
 export class HttpError extends Error {
   status: number;
   url: string;
+  isReliabilityBackend: boolean;
+  responseBody: string;
 
-  constructor(status: number, url: string, message?: string) {
+  constructor(status: number, url: string, message?: string, isReliabilityBackend = false, responseBody = "") {
     super(message || `HTTP ${status}`);
     this.name = "HttpError";
     this.status = status;
     this.url = url;
+    this.isReliabilityBackend = isReliabilityBackend;
+    this.responseBody = responseBody;
   }
 }
 
@@ -22,7 +26,9 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     });
 
     if (!response.ok) {
-      throw new HttpError(response.status, path);
+      const responseBody = await response.text();
+      const isReliabilityBackend = response.headers.get("x-reliability-status-backend") === "true";
+      throw new HttpError(response.status, path, undefined, isReliabilityBackend, responseBody);
     }
 
     return (await response.json()) as T;
@@ -63,7 +69,9 @@ export async function postNoContent(path: string): Promise<void> {
     });
 
     if (!response.ok) {
-      throw new HttpError(response.status, path);
+      const responseBody = await response.text();
+      const isReliabilityBackend = response.headers.get("x-reliability-status-backend") === "true";
+      throw new HttpError(response.status, path, undefined, isReliabilityBackend, responseBody);
     }
   } catch (error) {
     if (error instanceof HttpError) {
