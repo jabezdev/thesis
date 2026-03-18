@@ -315,6 +315,10 @@ if (config.sessionSecret === "change-this-secret") {
   console.warn("[SECURITY] SESSION_SECRET is using default value. Set a strong secret in production.");
 }
 
+console.log(
+  `[AUTH] user=${config.authUsername.trim().toLowerCase()} mode=${config.authPasswordHash ? "hash_with_plain_fallback" : "plain"}`
+);
+
 Bun.serve({
   hostname: "0.0.0.0",
   port: config.port,

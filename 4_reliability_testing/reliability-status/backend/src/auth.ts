@@ -36,20 +36,28 @@ function safeEqual(a: string, b: string): boolean {
 export async function verifyCredentials(username: string, password: string): Promise<boolean> {
   const normalizedInputUser = username.trim().toLowerCase();
   const normalizedConfigUser = config.authUsername.trim().toLowerCase();
+  const normalizedPassword = password.replace(/\r/g, "");
 
   if (!safeEqual(normalizedInputUser, normalizedConfigUser)) {
     return false;
   }
 
   if (config.authPasswordHash) {
-    return Bun.password.verify(password, config.authPasswordHash);
+    try {
+      const hashMatched = await Bun.password.verify(normalizedPassword, config.authPasswordHash);
+      if (hashMatched) {
+        return true;
+      }
+    } catch {
+      // Ignore malformed hash values and continue to plain-password fallback.
+    }
   }
 
   if (!config.authPassword) {
     return false;
   }
 
-  return safeEqual(password, config.authPassword);
+  return safeEqual(normalizedPassword, config.authPassword);
 }
 
 export function createSessionToken(username: string): string {
