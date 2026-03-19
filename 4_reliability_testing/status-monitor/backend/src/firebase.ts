@@ -12,13 +12,27 @@ export async function initializeFirebase() {
     Bun.env.FIREBASE_PROJECT_ID?.trim() || Bun.env.GOOGLE_CLOUD_PROJECT?.trim() || Bun.env.GCLOUD_PROJECT?.trim();
   const databaseURL = Bun.env.FIREBASE_DATABASE_URL?.trim() || 'https://panahon-live-default-rtdb.firebaseio.com';
 
+  const normalizeBase64 = (value: string) => {
+    const withoutQuotes = value.trim().replace(/^['"]|['"]$/g, '');
+    const compact = withoutQuotes.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+    const paddedLength = Math.ceil(compact.length / 4) * 4;
+    return compact.padEnd(paddedLength, '=');
+  };
+
   const parseServiceAccount = (rawJson: string, source: string): (admin.ServiceAccount & { project_id?: string }) => {
+    const trimmedJson = rawJson.trim();
+
     try {
-      return JSON.parse(rawJson) as admin.ServiceAccount & { project_id?: string };
+      const parsed = JSON.parse(trimmedJson) as (admin.ServiceAccount & { project_id?: string }) | null;
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('not-an-object');
+      }
+
+      return parsed;
     } catch {
       throw new Error(
         `[firebase] invalid ${source}: expected valid JSON object. ` +
-          'If using env variables on Dokploy, prefer FIREBASE_SERVICE_ACCOUNT_JSON_BASE64.',
+          'If using env variables on Dokploy, use one-line complete base64 output (no truncation) from `base64 -w 0 firebase-service-account.json`.',
       );
     }
   };
@@ -26,11 +40,15 @@ export async function initializeFirebase() {
   let credential: admin.credential.Credential | null = null;
   let projectId = explicitProjectId || null;
   if (inlineBase64) {
+    const normalizedBase64 = normalizeBase64(inlineBase64);
     let decodedJson = '';
     try {
-      decodedJson = Buffer.from(inlineBase64, 'base64').toString('utf8');
+      decodedJson = Buffer.from(normalizedBase64, 'base64').toString('utf8');
     } catch {
-      throw new Error('[firebase] invalid FIREBASE_SERVICE_ACCOUNT_JSON_BASE64: expected base64-encoded JSON.');
+      throw new Error(
+        '[firebase] invalid FIREBASE_SERVICE_ACCOUNT_JSON_BASE64: expected base64-encoded JSON. ' +
+          'Ensure the value is one line and not truncated by environment variable limits.',
+      );
     }
 
     const serviceAccount = parseServiceAccount(decodedJson, 'FIREBASE_SERVICE_ACCOUNT_JSON_BASE64');
