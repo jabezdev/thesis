@@ -15,6 +15,7 @@ const HEARTBEAT_HISTORY_PATH = Bun.env.RTDB_HEARTBEAT_HISTORY_PATH?.trim() || 's
 const DATA_DIR = Bun.env.STATUS_DATA_DIR?.trim() || '/data';
 const HEARTBEAT_HISTORY_FILE = Bun.env.HEARTBEAT_HISTORY_FILE?.trim() || join(DATA_DIR, 'heartbeat-history.json');
 const PORT = Number(Bun.env.PORT ?? '3001');
+const MAX_SAMPLE_CLOCK_SKEW_SECONDS = Number(Bun.env.MAX_SAMPLE_CLOCK_SKEW_SECONDS ?? `${90 * 24 * 60 * 60}`);
 
 const firestore = await initializeFirebase().then(() => getFirestore());
 const realtimeDb = getRealtimeDatabase();
@@ -33,10 +34,40 @@ function parseFirestoreTimestamp(value: unknown): string | null {
   return null;
 }
 
+function normalizeSampleTimestamp(rawValue: number | null, receivedAtMs: number): number | null {
+  if (typeof rawValue !== 'number' || !Number.isFinite(rawValue)) {
+    return null;
+  }
+
+  let normalizedSeconds = rawValue;
+  if (normalizedSeconds > 100_000_000_000) {
+    normalizedSeconds = normalizedSeconds / 1000;
+  }
+
+  normalizedSeconds = Math.floor(normalizedSeconds);
+  if (normalizedSeconds <= 0) {
+    return null;
+  }
+
+  const minReasonableEpochSeconds = 946_684_800;
+  if (normalizedSeconds < minReasonableEpochSeconds) {
+    return null;
+  }
+
+  const receivedAtSeconds = Math.floor(receivedAtMs / 1000);
+  const skewSeconds = Math.abs(normalizedSeconds - receivedAtSeconds);
+  if (Number.isFinite(MAX_SAMPLE_CLOCK_SKEW_SECONDS) && MAX_SAMPLE_CLOCK_SKEW_SECONDS > 0 && skewSeconds > MAX_SAMPLE_CLOCK_SKEW_SECONDS) {
+    return null;
+  }
+
+  return normalizedSeconds;
+}
+
 function normalizeReading(snapshot: admin.firestore.DocumentSnapshot): ReadingPacket {
   const data = snapshot.data() ?? {};
-  const sampleTimestamp = asNumber(data.ts);
+  const rawSampleTimestamp = asNumber(data.ts);
   const createdAt = snapshot.createTime?.toDate() ?? new Date();
+  const sampleTimestamp = normalizeSampleTimestamp(rawSampleTimestamp, createdAt.getTime());
   const receivedAt = createdAt.toISOString();
   const elapsedSeconds = toAgeSeconds(createdAt, new Date());
 

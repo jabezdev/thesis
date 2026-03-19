@@ -130,14 +130,15 @@ export function analyzePackets(readings: ReadingPacket[], expectedIntervalSecond
   const sorted = sortReadingsBySampleTimestamp(readings);
   const discrepancies: ReportDiscrepancy[] = [];
   let lostPackets = 0;
+  const missingSampleTimestampCount = sorted.reduce((count, reading) => {
+    return reading.sampleTimestamp === null ? count + 1 : count;
+  }, 0);
 
-  for (const reading of sorted) {
-    if (reading.sampleTimestamp === null) {
-      discrepancies.push({
-        kind: 'missing_sample_timestamp',
-        message: `Packet ${reading.id} is missing the sample timestamp`,
-      });
-    }
+  if (missingSampleTimestampCount > 0) {
+    discrepancies.push({
+      kind: 'missing_sample_timestamp',
+      message: `${missingSampleTimestampCount} packet(s) have invalid or missing sample timestamps and were ignored for gap analysis`,
+    });
   }
 
   for (let index = 1; index < sorted.length; index += 1) {
