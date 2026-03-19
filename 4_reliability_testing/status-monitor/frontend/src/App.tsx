@@ -13,6 +13,15 @@ const chartConfigs = [
   { title: 'Internal Resistance', subtitle: 'Battery internal resistance', key: 'battInternalResistanceMohm', accent: '#a3e635', unit: ' mΩ' },
 ] as const;
 
+const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  year: 'numeric',
+  month: 'short',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
 function formatNumber(value: number | null | undefined, digits = 2) {
   if (typeof value !== 'number' || Number.isNaN(value)) {
     return '—';
@@ -21,12 +30,12 @@ function formatNumber(value: number | null | undefined, digits = 2) {
   return value.toFixed(digits);
 }
 
-function formatElapsed(receivedAt: string | null | undefined) {
+function formatElapsed(receivedAt: string | null | undefined, nowMs: number = Date.now()) {
   if (!receivedAt) {
     return '—';
   }
 
-  const ageSeconds = Math.max(0, Math.floor((Date.now() - new Date(receivedAt).getTime()) / 1000));
+  const ageSeconds = Math.max(0, Math.floor((nowMs - new Date(receivedAt).getTime()) / 1000));
 
   if (ageSeconds < 60) {
     return `${ageSeconds}s ago`;
@@ -39,6 +48,19 @@ function formatElapsed(receivedAt: string | null | undefined) {
 
   const hours = Math.floor(minutes / 60);
   return `${hours}h ago`;
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) {
+    return '—';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return dateTimeFormatter.format(parsed);
 }
 
 function toHeartbeatHistory(value: unknown): HeartbeatSnapshot[] {
@@ -63,7 +85,7 @@ function StatCard({ label, value, hint }: { label: string; value: string; hint?:
   );
 }
 
-function HeartbeatTable({ history }: { history: HeartbeatSnapshot[] }) {
+function HeartbeatTable({ history, nowMs }: { history: HeartbeatSnapshot[]; nowMs: number }) {
   if (history.length === 0) {
     return <p className="empty-state">No heartbeat history has been captured yet.</p>;
   }
@@ -73,11 +95,11 @@ function HeartbeatTable({ history }: { history: HeartbeatSnapshot[] }) {
       {history.slice(-8).reverse().map((heartbeat) => (
         <article className="history-row" key={`${heartbeat.id}-${heartbeat.receivedAtMs}`}>
           <div>
-            <strong>{heartbeat.timestamp ?? heartbeat.receivedAt}</strong>
+            <strong>{formatDateTime(heartbeat.timestamp ?? heartbeat.receivedAt)}</strong>
             <p>{heartbeat.stationId ?? heartbeat.id}</p>
           </div>
           <div>
-            <span>{formatElapsed(heartbeat.receivedAt)}</span>
+            <span>{formatElapsed(heartbeat.receivedAt, nowMs)}</span>
             <small>
               SD {heartbeat.sdOk ? 'OK' : 'FAULT'} · {heartbeat.pendingRows ?? 0} pending
             </small>
@@ -92,6 +114,17 @@ function App() {
   const [report, setReport] = useState<StatusReport | null>(null);
   const [heartbeatHistory, setHeartbeatHistory] = useState<HeartbeatSnapshot[]>([]);
   const [connectionState, setConnectionState] = useState<'connecting' | 'live' | 'error'>('connecting');
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   useEffect(() => {
     const currentRef = ref(realtimeDb, 'status/current');
@@ -138,6 +171,7 @@ function App() {
           <p className="hero-copy">
             The Bun service ingests Firestore readings, detects packet gaps, stores heartbeat history locally, and publishes the current report into Firebase Realtime Database.
           </p>
+          <p className="hero-meta">Last report update: {formatDateTime(report?.generatedAt)}</p>
         </div>
 
         <div className={`connection-pill ${connectionState}`}>
@@ -159,13 +193,13 @@ function App() {
         />
         <StatCard
           label="Latest packet"
-          value={latestPacket ? formatElapsed(latestPacket.receivedAt) : '—'}
-          hint={latestPacket ? `Sample time ${latestPacket.sampleTimeIso ?? 'n/a'}` : 'No packet available'}
+          value={latestPacket ? formatElapsed(latestPacket.receivedAt, nowMs) : '—'}
+          hint={latestPacket ? `Sample time ${formatDateTime(latestPacket.sampleTimeIso)}` : 'No packet available'}
         />
         <StatCard
           label="Latest heartbeat"
-          value={latestHeartbeat ? formatElapsed(latestHeartbeat.receivedAt) : '—'}
-          hint={latestHeartbeat ? `Stored heartbeats ${heartbeatHistory.length}` : 'No heartbeat available'}
+          value={latestHeartbeat ? formatElapsed(latestHeartbeat.receivedAt, nowMs) : '—'}
+          hint={latestHeartbeat ? `${formatDateTime(latestHeartbeat.receivedAt)} · ${heartbeatHistory.length} stored` : 'No heartbeat available'}
         />
       </section>
 
@@ -176,7 +210,7 @@ function App() {
               <h2>Latest packet</h2>
               <p>Contents of the most recent reading and the elapsed time since it arrived.</p>
             </div>
-            <span className="subtle-chip">{latestPacket ? latestPacket.elapsedLabel : 'no packet'}</span>
+            <span className="subtle-chip">{latestPacket ? formatElapsed(latestPacket.receivedAt, nowMs) : 'no packet'}</span>
           </div>
 
           {latestPacket ? (
@@ -207,11 +241,11 @@ function App() {
               </div>
               <div>
                 <span>Sample time</span>
-                <strong>{latestPacket.sampleTimeIso ?? 'n/a'}</strong>
+                <strong>{formatDateTime(latestPacket.sampleTimeIso)}</strong>
               </div>
               <div>
                 <span>Received</span>
-                <strong>{latestPacket.receivedAt}</strong>
+                <strong>{formatDateTime(latestPacket.receivedAt)}</strong>
               </div>
             </div>
           ) : (
@@ -223,7 +257,7 @@ function App() {
           <div className="panel-heading">
             <div>
               <h2>Packet anomalies</h2>
-              <p>Estimated packet loss and any arrival anomalies derived from Firestore upload timing.</p>
+              <p>Estimated packet loss and arrival anomalies derived from Firestore upload timing (duplicate packets ignored).</p>
             </div>
             <span className="subtle-chip">{discrepancyItems.length} findings</span>
           </div>
@@ -234,6 +268,12 @@ function App() {
                 <article className="discrepancy-item" key={`${item.kind}-${index}`}>
                   <strong>{item.kind.replaceAll('_', ' ')}</strong>
                   <p>{item.message}</p>
+                  {item.fromReceivedAt || item.toReceivedAt ? (
+                    <small>
+                      {item.fromReceivedAt ? `From ${formatDateTime(item.fromReceivedAt)}` : 'From —'}
+                      {item.toReceivedAt ? ` to ${formatDateTime(item.toReceivedAt)}` : ''}
+                    </small>
+                  ) : null}
                 </article>
               ))}
             </div>
@@ -263,7 +303,7 @@ function App() {
             <h2>Heartbeat stream</h2>
             <p>Latest Firestore heartbeat and the locally stored snapshot history.</p>
           </div>
-          <span className="subtle-chip">{latestHeartbeat ? latestHeartbeat.elapsedLabel : 'no heartbeat'}</span>
+          <span className="subtle-chip">{latestHeartbeat ? formatElapsed(latestHeartbeat.receivedAt, nowMs) : 'no heartbeat'}</span>
         </div>
 
         <div className="heartbeat-summary">
@@ -305,11 +345,11 @@ function App() {
           </div>
           <div>
             <span>Received</span>
-            <strong>{latestHeartbeat ? latestHeartbeat.receivedAt : '—'}</strong>
+            <strong>{formatDateTime(latestHeartbeat?.receivedAt)}</strong>
           </div>
         </div>
 
-        <HeartbeatTable history={heartbeatHistory} />
+        <HeartbeatTable history={heartbeatHistory} nowMs={nowMs} />
       </section>
     </main>
   );

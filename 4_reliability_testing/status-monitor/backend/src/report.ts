@@ -163,16 +163,6 @@ export function analyzePackets(readings: ReadingPacket[], expectedIntervalSecond
       });
     }
 
-    if (
-      previous.sampleTimestamp !== null &&
-      current.sampleTimestamp !== null &&
-      previous.sampleTimestamp === current.sampleTimestamp
-    ) {
-      discrepancies.push({
-        kind: 'duplicate_sample_timestamp',
-        message: `Duplicate sample timestamp ${current.sampleTimestamp} observed in consecutive packets`,
-      });
-    }
   }
 
   return { lostPackets, discrepancies };

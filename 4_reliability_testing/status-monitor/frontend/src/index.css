@@ -121,6 +121,12 @@ select {
   margin: 14px 0 0;
 }
 
+.hero-meta {
+  margin: 12px 0 0;
+  color: #b7cae0;
+  font-size: 0.9rem;
+}
+
 .connection-pill {
   display: inline-flex;
   align-items: center;
@@ -162,6 +168,12 @@ select {
   border-radius: 22px;
   border: 1px solid rgba(148, 163, 184, 0.14);
   background: rgba(10, 17, 29, 0.9);
+  transition: border-color 140ms ease, transform 140ms ease;
+}
+
+.stat-card:hover {
+  border-color: rgba(148, 163, 184, 0.26);
+  transform: translateY(-1px);
 }
 
 .stat-card span {
@@ -281,6 +293,13 @@ select {
 .history-row small {
   margin: 6px 0 0;
   color: #9fb3c9;
+}
+
+.discrepancy-item small {
+  display: block;
+  margin-top: 8px;
+  color: #b3c6db;
+  font-size: 0.82rem;
 }
 
 .history-row {
