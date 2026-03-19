@@ -30,8 +30,20 @@ Copy `.env.example` to `.env` and fill in the values for your Firebase project.
 Backend requirements:
 
 - `FIREBASE_PROJECT_ID` must be set (for example `panahon-live`).
-- Set either `FIREBASE_SERVICE_ACCOUNT_PATH` (mounted JSON file) or `FIREBASE_SERVICE_ACCOUNT_JSON`.
+- Set one credential source: `FIREBASE_SERVICE_ACCOUNT_JSON_BASE64`, `FIREBASE_SERVICE_ACCOUNT_JSON`, or `FIREBASE_SERVICE_ACCOUNT_PATH` (mounted JSON file).
 - If the service account file path is configured but the file is not mounted, backend falls back to application default credentials, which usually fails in local Docker unless `FIREBASE_PROJECT_ID` and valid ADC are available.
+
+Dokploy (no file secret upload support):
+
+- Generate one-line base64 from your service account JSON locally:
+	- `base64 -w 0 firebase-service-account.json` (Linux)
+	- `base64 firebase-service-account.json | tr -d '\n'` (macOS)
+- Set Dokploy environment variables for backend:
+	- `FIREBASE_PROJECT_ID=panahon-live`
+	- `FIREBASE_DATABASE_URL=<your rtdb url>`
+	- `FIREBASE_SERVICE_ACCOUNT_JSON_BASE64=<output from command above>`
+	- `FIREBASE_SERVICE_ACCOUNT_PATH=`
+	- `FIREBASE_SERVICE_ACCOUNT_JSON=`
 
 Local Docker quick setup (file-based):
 

@@ -6,15 +6,38 @@ export async function initializeFirebase() {
   }
 
   const inlineJson = Bun.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
+  const inlineBase64 = Bun.env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64?.trim();
   const serviceAccountPath = Bun.env.FIREBASE_SERVICE_ACCOUNT_PATH?.trim();
   const explicitProjectId =
     Bun.env.FIREBASE_PROJECT_ID?.trim() || Bun.env.GOOGLE_CLOUD_PROJECT?.trim() || Bun.env.GCLOUD_PROJECT?.trim();
   const databaseURL = Bun.env.FIREBASE_DATABASE_URL?.trim() || 'https://panahon-live-default-rtdb.firebaseio.com';
 
+  const parseServiceAccount = (rawJson: string, source: string): (admin.ServiceAccount & { project_id?: string }) => {
+    try {
+      return JSON.parse(rawJson) as admin.ServiceAccount & { project_id?: string };
+    } catch {
+      throw new Error(
+        `[firebase] invalid ${source}: expected valid JSON object. ` +
+          'If using env variables on Dokploy, prefer FIREBASE_SERVICE_ACCOUNT_JSON_BASE64.',
+      );
+    }
+  };
+
   let credential: admin.credential.Credential | null = null;
   let projectId = explicitProjectId || null;
-  if (inlineJson) {
-    const serviceAccount = JSON.parse(inlineJson) as admin.ServiceAccount & { project_id?: string };
+  if (inlineBase64) {
+    let decodedJson = '';
+    try {
+      decodedJson = Buffer.from(inlineBase64, 'base64').toString('utf8');
+    } catch {
+      throw new Error('[firebase] invalid FIREBASE_SERVICE_ACCOUNT_JSON_BASE64: expected base64-encoded JSON.');
+    }
+
+    const serviceAccount = parseServiceAccount(decodedJson, 'FIREBASE_SERVICE_ACCOUNT_JSON_BASE64');
+    credential = admin.credential.cert(serviceAccount);
+    projectId = projectId || serviceAccount.projectId || serviceAccount.project_id || null;
+  } else if (inlineJson) {
+    const serviceAccount = parseServiceAccount(inlineJson, 'FIREBASE_SERVICE_ACCOUNT_JSON');
     credential = admin.credential.cert(serviceAccount);
     projectId = projectId || serviceAccount.projectId || serviceAccount.project_id || null;
   }
@@ -42,7 +65,7 @@ export async function initializeFirebase() {
     if (!projectId) {
       throw new Error(
         '[firebase] missing project id and service-account credentials. ' +
-          'Set FIREBASE_PROJECT_ID and provide either FIREBASE_SERVICE_ACCOUNT_JSON or a valid FIREBASE_SERVICE_ACCOUNT_PATH.',
+          'Set FIREBASE_PROJECT_ID and provide FIREBASE_SERVICE_ACCOUNT_JSON_BASE64, FIREBASE_SERVICE_ACCOUNT_JSON, or a valid FIREBASE_SERVICE_ACCOUNT_PATH.',
       );
     }
 
@@ -53,7 +76,7 @@ export async function initializeFirebase() {
     } catch {
       throw new Error(
         '[firebase] no usable credentials found. ' +
-          'Provide FIREBASE_SERVICE_ACCOUNT_JSON or mount a service account file to FIREBASE_SERVICE_ACCOUNT_PATH ' +
+          'Provide FIREBASE_SERVICE_ACCOUNT_JSON_BASE64/FIREBASE_SERVICE_ACCOUNT_JSON or mount a service account file to FIREBASE_SERVICE_ACCOUNT_PATH ' +
           '(for Docker Compose: ./secrets/firebase-service-account.json -> /run/secrets/firebase-service-account.json).',
       );
     }
