@@ -1,0 +1,22 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    environment:
+      PORT: 3002
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-panahon-live}
+      FIREBASE_DATABASE_URL: ${FIREBASE_DATABASE_URL:-https://panahon-live-default-rtdb.firebaseio.com}
+      FIREBASE_SERVICE_ACCOUNT_JSON_BASE64: ${FIREBASE_SERVICE_ACCOUNT_JSON_BASE64}
+      FIRESTORE_READINGS_COLLECTION: ${FIRESTORE_READINGS_COLLECTION:-readings}
+    ports:
+      - "3002:3002"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "18081:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
