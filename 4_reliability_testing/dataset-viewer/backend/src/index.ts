@@ -1,9 +1,11 @@
+import { resolve } from 'node:path';
 import admin from 'firebase-admin';
 import { initializeFirebase, getFirestore } from './firebase';
 import type { ReadingPacket } from './types';
 
 const READINGS_COLLECTION = Bun.env.FIRESTORE_READINGS_COLLECTION?.trim() || 'readings';
 const PORT = Number(Bun.env.PORT ?? '3002');
+const DIST_DIR = resolve(Bun.env.DIST_DIR?.trim() || './dist');
 const MAX_SAMPLE_CLOCK_SKEW_SECONDS = Number(Bun.env.MAX_SAMPLE_CLOCK_SKEW_SECONDS ?? `${90 * 24 * 60 * 60}`);
 
 const firestore = await initializeFirebase().then(() => getFirestore());
@@ -116,21 +118,38 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
+async function serveStatic(pathname: string): Promise<Response | null> {
+  try {
+    const safePath = resolve(DIST_DIR, '.' + pathname);
+    if (!safePath.startsWith(DIST_DIR)) return null;
+    const file = Bun.file(safePath);
+    if (await file.exists()) return new Response(file);
+  } catch {
+    // ignore fs errors
+  }
+  return null;
+}
+
 function startServer() {
   Bun.serve({
     port: PORT,
-    fetch(request) {
+    async fetch(request) {
       const url = new URL(request.url);
 
       if (request.method === 'OPTIONS') {
         return new Response(null, { status: 204, headers: CORS });
       }
 
-      if (url.pathname === '/healthz') {
+      // Strip optional /api prefix so the same routes work with or without it
+      const path = url.pathname.startsWith('/api/')
+        ? url.pathname.slice(4)
+        : url.pathname;
+
+      if (path === '/healthz') {
         return Response.json({ ok: true, readings: readingsById.size }, { headers: CORS });
       }
 
-      if (url.pathname === '/readings' || url.pathname === '/readings.csv') {
+      if (path === '/readings' || path === '/readings.csv') {
         const fromParam = url.searchParams.get('from');
         const toParam = url.searchParams.get('to');
         const from = fromParam ? Number(fromParam) : null;
@@ -140,7 +159,7 @@ function startServer() {
           to !== null && Number.isFinite(to) ? to : null,
         );
 
-        if (url.pathname === '/readings.csv') {
+        if (path === '/readings.csv') {
           const filename = `readings_${from ?? 'all'}_${to ?? 'all'}.csv`;
           return new Response(toCsv(readings), {
             headers: {
@@ -154,7 +173,15 @@ function startServer() {
         return Response.json(readings, { headers: CORS });
       }
 
-      return new Response('Not found', { status: 404, headers: CORS });
+      // Serve built frontend static files
+      const staticRes = await serveStatic(url.pathname);
+      if (staticRes) return staticRes;
+
+      // SPA fallback — let the React router handle unknown paths
+      const index = Bun.file(`${DIST_DIR}/index.html`);
+      if (await index.exists()) return new Response(index);
+
+      return new Response('Not found', { status: 404 });
     },
   });
 

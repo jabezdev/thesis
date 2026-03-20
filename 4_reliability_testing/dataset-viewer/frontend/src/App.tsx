@@ -2,6 +2,8 @@ import { useState, useCallback, useMemo } from 'react';
 import type { ReadingPacket } from './types';
 import { UPlotChart } from './components/UPlotChart';
 
+const API_BASE = '/api';
+
 const PAGE_SIZE = 100;
 
 const CHART_CONFIGS = [
@@ -75,7 +77,7 @@ function App() {
     setError(null);
     setPage(0);
     try {
-      const res = await fetch(`/api/readings?${buildParams()}`);
+      const res = await fetch(`${API_BASE}/readings?${buildParams()}`);
       if (!res.ok) throw new Error(`Server returned HTTP ${res.status}`);
       const data = (await res.json()) as ReadingPacket[];
       setReadings(data);
@@ -98,7 +100,7 @@ function App() {
     [readings],
   );
 
-  const csvHref = useMemo(() => `/api/readings.csv?${buildParams()}`, [buildParams]);
+  const csvHref = useMemo(() => `${API_BASE}/readings.csv?${buildParams()}`, [buildParams]);
 
   const firstTs = readings[0]?.sampleTimestamp;
   const lastTs = readings[readings.length - 1]?.sampleTimestamp;
