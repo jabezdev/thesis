@@ -1,0 +1,1 @@
+timestamp,temperature,humidity,rainfall_mm,rainfall_1h_mm,rain_raw,batt_voltage,batt_current_A,batt_soc_pct,batt_total_energy_Wh,batt_peak_current_A,v_min,solar_voltage,solar_current_A,int_temp,min_heap,log_count,sd_free,up_lat,rssi,reconnects,fail_streak,max_fail,latency,uptime,wifi_offline,ir
