@@ -16,17 +16,33 @@ RTC_DS3231 rtc;
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("\n--- RTC Unit Test ---");
+  Serial.println("\n--- RTC Unit Test + I2C Scan ---");
+
+  // Explicitly initialize I2C on pins 21 and 22
+  Serial.println("Initialzing I2C on SDA=21, SCL=22...");
+  Wire.begin(21, 22);
+
+  // Quick I2C Scan
+  Serial.println("Scanning I2C bus...");
+  byte error, address;
+  int nDevices = 0;
+  for(address = 1; address < 127; address++ ) {
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission();
+    if (error == 0) {
+      Serial.print("I2C device found at address 0x");
+      if (address<16) Serial.print("0");
+      Serial.print(address,HEX);
+      Serial.println("  !");
+      nDevices++;
+    }
+  }
+  if (nDevices == 0) Serial.println("No I2C devices found\n");
+  else Serial.println("Scan done\n");
 
   if (!rtc.begin()) {
     Serial.println("Couldn't find RTC. Check wiring!");
     while (1) delay(10);
-  }
-
-  if (rtc.lostPower()) {
-    Serial.println("RTC lost power, let's set the time!");
-    // Following line sets the RTC to the date & time this sketch was compiled
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
 }
 

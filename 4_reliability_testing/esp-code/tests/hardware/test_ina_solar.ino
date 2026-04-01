@@ -15,7 +15,29 @@ Adafruit_INA219 ina219_solar(0x41);
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("\n--- INA219 Solar Unit Test ---");
+  Serial.println("\n--- INA219 Solar Unit Test + I2C Scan ---");
+
+  // Explicitly initialize I2C on pins 21 and 22
+  Serial.println("Initialzing I2C on SDA=21, SCL=22...");
+  Wire.begin(21, 22);
+
+  // Quick I2C Scan
+  Serial.println("Scanning I2C bus...");
+  byte error, address;
+  int nDevices = 0;
+  for(address = 1; address < 127; address++ ) {
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission();
+    if (error == 0) {
+      Serial.print("I2C device found at address 0x");
+      if (address<16) Serial.print("0");
+      Serial.print(address,HEX);
+      Serial.println("  !");
+      nDevices++;
+    }
+  }
+  if (nDevices == 0) Serial.println("No I2C devices found\n");
+  else Serial.println("Scan done\n");
 
   if (!ina219_solar.begin()) {
     Serial.println("Failed to find INA219 (Solar) chip at 0x41");
