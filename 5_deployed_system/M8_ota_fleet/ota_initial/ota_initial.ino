@@ -57,6 +57,7 @@ enum OTAState { OTA_IDLE, OTA_START_DOWNLOAD, OTA_DOWNLOADING, OTA_FLASHING };
 volatile OTAState current_ota_state = OTA_IDLE;
 
 bool   pending_ota_update  = false;
+String failed_ota_version  = "";
 bool   g_dongle_on = true;
 
 // Data Structs
@@ -99,6 +100,15 @@ uint32_t g_send_success = 0;
 uint32_t g_send_fail = 0;
 uint32_t g_http_errors = 0;
 uint32_t g_sd_failures = 0;
+
+// Advanced Telemetry State
+uint32_t g_i2c_error_count = 0;
+uint32_t g_modbus_crc_error_count = 0;
+uint32_t g_dongle_power_cycles = 0;
+uint32_t g_http_2xx_count = 0;
+uint32_t g_http_transport_error_count = 0;
+uint32_t g_upload_latency_ms = 0;
+uint32_t g_sd_max_write_latency_ms = 0;
 
 // NTP Time setup
 const long GMT_OFFSET_SEC = 28800; // UTC+8
@@ -168,83 +178,106 @@ void otaTask(void *pvParams) {
                 if (httpCode == HTTP_CODE_OK) {
                     int len = http.getSize();
                     WiFiClient *stream = http.getStreamPtr();
-                    File file = SD.open("/update.bin", FILE_WRITE);
-                    if (file) {
-                        uint8_t buff[2048] = { 0 };
-                        int total_written = 0;
-                        bool download_success = true;
-                        
-                        current_ota_state = OTA_DOWNLOADING;
-                        while (http.connected() && (len > 0 || len == -1)) {
-                            size_t size = stream->available();
-                            if (size > 0) {
-                                int c = stream->readBytes(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
-                                file.write(buff, c);
-                                total_written += c;
-                                if (len > 0) len -= c;
-                            } else {
-                                vTaskDelay(pdMS_TO_TICKS(100)); // Yield while waiting for network
+                    if (xSemaphoreTake(g_sd_mutex, portMAX_DELAY) == pdTRUE) {
+                        File file = SD.open("/update.bin", FILE_WRITE);
+                        if (file) {
+                            uint8_t buff[2048] = { 0 };
+                            int total_written = 0;
+                            bool download_success = true;
+                            
+                            current_ota_state = OTA_DOWNLOADING;
+                            while (http.connected() && (len > 0 || len == -1)) {
+                                size_t size = stream->available();
+                                if (size > 0) {
+                                    int c = stream->readBytes(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
+                                    file.write(buff, c);
+                                    total_written += c;
+                                    if (len > 0) len -= c;
+                                } else {
+                                    vTaskDelay(pdMS_TO_TICKS(100)); // Yield while waiting for network
+                                }
+                                vTaskDelay(pdMS_TO_TICKS(50)); // Yield CPU to other tasks
                             }
-                            vTaskDelay(pdMS_TO_TICKS(50)); // Yield CPU to other tasks
-                        }
-                        file.close();
-                        
-                        // Wait briefly before flashing
-                        vTaskDelay(pdMS_TO_TICKS(500));
-                        
-                        if (download_success && total_written > 0) {
-                            current_ota_state = OTA_FLASHING;
+                            file.close();
+                            xSemaphoreGive(g_sd_mutex);
+                            
+                            // Wait briefly before flashing
+                            vTaskDelay(pdMS_TO_TICKS(500));
+                            
+                            if (download_success && total_written > 0) {
+                                current_ota_state = OTA_FLASHING;
+                            } else {
+                                reportStatusToRTDB("failed", "Download interrupted");
+                                current_ota_state = OTA_IDLE;
+                                failed_ota_version = rtdb_target_version;
+                                pending_ota_update = false; // Reset flags
+                            }
                         } else {
-                            reportStatusToRTDB("failed", "Download interrupted");
+                            xSemaphoreGive(g_sd_mutex);
+                            reportStatusToRTDB("failed", "SD Write Error");
                             current_ota_state = OTA_IDLE;
-                            pending_ota_update = false; // Reset flags
+                            failed_ota_version = rtdb_target_version;
+                            pending_ota_update = false;
                         }
                     } else {
-                        reportStatusToRTDB("failed", "SD Write Error");
+                        reportStatusToRTDB("failed", "SD Mutex Timeout");
                         current_ota_state = OTA_IDLE;
+                        failed_ota_version = rtdb_target_version;
                         pending_ota_update = false;
                     }
                 } else {
                     reportStatusToRTDB("failed", "HTTP Code " + String(httpCode));
                     current_ota_state = OTA_IDLE;
+                    failed_ota_version = rtdb_target_version;
                     pending_ota_update = false;
                 }
                 http.end();
             } else {
                 reportStatusToRTDB("failed", "HTTP Begin Failed");
                 current_ota_state = OTA_IDLE;
+                failed_ota_version = rtdb_target_version;
                 pending_ota_update = false;
             }
         } else if (current_ota_state == OTA_FLASHING) {
             reportStatusToRTDB("flashing", "Local SD Update");
-            File updateFile = SD.open("/update.bin");
-            if (updateFile) {
-                size_t updateSize = updateFile.size();
-                if (rtdb_target_md5.length() > 0) {
-                    Update.setMD5(rtdb_target_md5.c_str());
-                }
-                
-                if (Update.begin(updateSize)) {
-                    Serial.println("Writing to OTA partition...");
-                    size_t written = Update.writeStream(updateFile);
-                    if (written == updateSize) {
-                        if (Update.end()) {
-                            Serial.println("OTA Success! Rebooting...");
-                            reportStatusToRTDB("idle");
-                            delay(1000);
-                            ESP.restart();
+            if (xSemaphoreTake(g_sd_mutex, portMAX_DELAY) == pdTRUE) {
+                File updateFile = SD.open("/update.bin");
+                if (updateFile) {
+                    size_t updateSize = updateFile.size();
+                    if (rtdb_target_md5.length() > 0) {
+                        Update.setMD5(rtdb_target_md5.c_str());
+                    }
+                    
+                    if (Update.begin(updateSize)) {
+                        Serial.println("Writing to OTA partition...");
+                        size_t written = Update.writeStream(updateFile);
+                        if (written == updateSize) {
+                            if (Update.end()) {
+                                Serial.println("OTA Success! Rebooting...");
+                                reportStatusToRTDB("idle");
+                                delay(1000);
+                                ESP.restart();
+                            } else {
+                                reportStatusToRTDB("failed", "Update end error: " + String(Update.getError()));
+                                failed_ota_version = rtdb_target_version;
+                            }
                         } else {
-                            reportStatusToRTDB("failed", "Update end error: " + String(Update.getError()));
+                            reportStatusToRTDB("failed", "Written only " + String(written) + "/" + String(updateSize));
+                            failed_ota_version = rtdb_target_version;
                         }
                     } else {
-                        reportStatusToRTDB("failed", "Written only " + String(written) + "/" + String(updateSize));
+                        reportStatusToRTDB("failed", "Not enough space to begin OTA");
+                        failed_ota_version = rtdb_target_version;
                     }
+                    updateFile.close();
                 } else {
-                    reportStatusToRTDB("failed", "Not enough space to begin OTA");
+                    reportStatusToRTDB("failed", "Failed to open SD bin for update");
+                    failed_ota_version = rtdb_target_version;
                 }
-                updateFile.close();
+                xSemaphoreGive(g_sd_mutex);
             } else {
-                reportStatusToRTDB("failed", "Failed to open SD bin for update");
+                reportStatusToRTDB("failed", "SD Mutex Timeout on Flash");
+                failed_ota_version = rtdb_target_version;
             }
             current_ota_state = OTA_IDLE;
             pending_ota_update = false;
@@ -273,6 +306,7 @@ void fetchOTAConfig() {
       if (doc.containsKey("target_md5")) rtdb_target_md5 = doc["target_md5"].as<String>();
       
       if (rtdb_target_version != "" && rtdb_target_version != FIRMWARE_VERSION &&
+          rtdb_target_version != failed_ota_version &&
           rtdb_target_url != "" && rtdb_target_url != "null") {
         pending_ota_update = true;
       }
@@ -350,14 +384,31 @@ bool uploadFiveMinPayload(const MinuteBlock* queue, int count, const char* colle
   health["wifi_rssi"]["integerValue"] = String(WiFi.RSSI());
   health["firmware"]["stringValue"] = FIRMWARE_VERSION;
 
+  // New prognostics
+  health["i2c_errs"]["integerValue"] = String(g_i2c_error_count);
+  health["mb_errs"]["integerValue"] = String(g_modbus_crc_error_count);
+  health["dongle_cycles"]["integerValue"] = String(g_dongle_power_cycles);
+  health["http_2xx"]["integerValue"] = String(g_http_2xx_count);
+  health["http_errs"]["integerValue"] = String(g_http_transport_error_count);
+  health["upload_lat_ms"]["integerValue"] = String(g_upload_latency_ms);
+  health["sd_lat_ms"]["integerValue"] = String(g_sd_max_write_latency_ms);
+  health["min_heap"]["integerValue"] = String(esp_get_minimum_free_heap_size());
+
   String payload;
   serializeJson(doc, payload);
 
+  uint32_t t_start = millis();
   int code = http.PATCH(payload);
+  g_upload_latency_ms = millis() - t_start;
   http.end();
 
   if (code >= 200 && code < 300) {
-      g_send_success++; return true;
+      g_send_success++;
+      g_http_2xx_count++;
+      return true;
+  }
+  if (code < 0) {
+      g_http_transport_error_count++;
   }
   g_send_fail++; return false;
 }
@@ -391,6 +442,8 @@ void sensorTask(void *pvParams) {
         if (res == node.ku8MBSuccess) {
             hum = node.getResponseBuffer(0) / 10.0f;
             temp = node.getResponseBuffer(1) / 10.0f;
+        } else {
+            g_modbus_crc_error_count++;
         }
 
         // Rain
@@ -415,7 +468,10 @@ void sensorTask(void *pvParams) {
             // Log securely using SD mutex, skip during OTA
             if (current_ota_state == OTA_IDLE) {
                 if (xSemaphoreTake(g_sd_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+                    uint32_t sd_start = millis();
                     appendToSD("/ota_1min.csv", b);
+                    uint32_t sd_lat = millis() - sd_start;
+                    if (sd_lat > g_sd_max_write_latency_ms) g_sd_max_write_latency_ms = sd_lat;
                     xSemaphoreGive(g_sd_mutex);
                 }
             }
@@ -458,6 +514,7 @@ void uploadTask(void *pvParams) {
             Serial.println("[POWER] Turning LTE Modem ON...");
             digitalWrite(WIFI_POWER_PIN, HIGH);
             is_modem_on = true;
+            g_dongle_power_cycles++;
             // Delay a bit locally before forcing reconnect to avoid instant failure spam
             vTaskDelay(pdMS_TO_TICKS(2000));
         } else if (!need_modem && is_modem_on) {
@@ -500,6 +557,7 @@ void uploadTask(void *pvParams) {
                 xSemaphoreGive(g_queue_mutex);
             }
 
+            bool is_upload_successful = true;
             if (c > 0) {
                 bool success = uploadFiveMinPayload(copy_q, c, "ota_initial_data");
                 if (success) {
@@ -516,6 +574,7 @@ void uploadTask(void *pvParams) {
                     }
                     ticksPassedSinceUpload = 0;
                 } else {
+                    is_upload_successful = false;
                     Serial.println("[UPLOAD] Firestore patch failed. Retaining queue for next tick.");
                     // DO NOT reset ticksPassedSinceUpload. Modem stays ON and retries immediately next tick.
                 }
@@ -523,7 +582,7 @@ void uploadTask(void *pvParams) {
                  ticksPassedSinceUpload = 0; // Empty queue, reset timer
             }
 
-            if (pending_ota_update && rtdb_target_url != "" && rtdb_target_url != "null") {
+            if (is_upload_successful && pending_ota_update && rtdb_target_url != "" && rtdb_target_url != "null") {
                 if (current_ota_state == OTA_IDLE) {
                     current_ota_state = OTA_START_DOWNLOAD;
                 }
