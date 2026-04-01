@@ -420,6 +420,7 @@ void sensorTask(void *pvParams) {
     int samples = 0;
     
     TickType_t xLastWakeTime = xTaskGetTickCount();
+    Serial.println("[SENSOR] Task started.");
 
     while(true) {
         // Determine mode parameters
@@ -437,12 +438,27 @@ void sensorTask(void *pvParams) {
         }
 
         // ModBus RS485 Sampling
-        float temp=0, hum=0;
-        uint8_t res = node.readHoldingRegisters(0x0000, 2);
-        if (res == node.ku8MBSuccess) {
-            hum = node.getResponseBuffer(0) / 10.0f;
-            temp = node.getResponseBuffer(1) / 10.0f;
-        } else {
+        static float last_temp = 0.0, last_hum = 0.0;
+        float temp = last_temp, hum = last_hum;
+        uint8_t res = 0xFF;
+        
+        for (int retry = 0; retry < 3; retry++) {
+            res = node.readHoldingRegisters(0x0000, 2);
+            if (res == node.ku8MBSuccess) {
+                hum = node.getResponseBuffer(0) / 10.0f;
+                temp = node.getResponseBuffer(1) / 10.0f;
+                last_hum = hum;
+                last_temp = temp;
+                break;
+            } else {
+                if (retry == 2) {
+                    Serial.printf("[MODBUS] FAILED all 3 retries (err=0x%02X)\n", res);
+                }
+                vTaskDelay(pdMS_TO_TICKS(100)); // Brief pause before retry
+            }
+        }
+        
+        if (res != node.ku8MBSuccess) {
             g_modbus_crc_error_count++;
         }
 
@@ -452,6 +468,13 @@ void sensorTask(void *pvParams) {
         sum_temp += temp; sum_hum += hum; sum_rain += rain;
         sum_batt_v += bv; sum_batt_i += bi; sum_solar_v += sv; sum_solar_i += si;
         samples++;
+
+        // Periodic heartbeat every 10 samples
+        if (samples % 10 == 0) {
+            Serial.printf("[SENSOR] sample %d/%d | T=%.1f H=%.1f | mb_err=%d | stack=%d\n",
+                          samples, mode_samples_per_block, temp, hum,
+                          (int)g_modbus_crc_error_count, uxTaskGetStackHighWaterMark(NULL));
+        }
 
         if (samples >= mode_samples_per_block) {
             MinuteBlock b;
@@ -464,6 +487,9 @@ void sensorTask(void *pvParams) {
             b.solar_v_avg = sum_solar_v / samples;
             b.solar_i_avg = sum_solar_i / samples;
             b.sample_count = samples;
+
+            Serial.printf("[SENSOR] Block ready: T=%.1f H=%.1f R=%.2f ts=%s n=%d\n",
+                          b.temp_avg, b.hum_avg, b.rain_sum, b.timestamp, b.sample_count);
 
             // Log securely using SD mutex, skip during OTA
             if (current_ota_state == OTA_IDLE) {
@@ -480,8 +506,13 @@ void sensorTask(void *pvParams) {
             if (xSemaphoreTake(g_queue_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
                 if (tx_queue_count < 60) {
                     tx_queue[tx_queue_count++] = b;
+                    Serial.printf("[SENSOR] Enqueued block. Queue: %d\n", tx_queue_count);
+                } else {
+                    Serial.println("[SENSOR] WARNING: Queue full! Block dropped.");
                 }
                 xSemaphoreGive(g_queue_mutex);
+            } else {
+                Serial.println("[SENSOR] WARNING: Queue mutex timeout! Block dropped.");
             }
 
             sum_temp=0; sum_hum=0; sum_rain=0;
@@ -497,6 +528,8 @@ void uploadTask(void *pvParams) {
     const TickType_t xFrequency = pdMS_TO_TICKS(10 * 1000); // Check every 10 seconds
     int ticksPassedSinceUpload = 0;
 
+    Serial.println("[UPLOAD] Task started.");
+
     while (true) {
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
         ticksPassedSinceUpload++;
@@ -504,6 +537,19 @@ void uploadTask(void *pvParams) {
         // Mode 1: 6 blocks (1m), Mode 2: 5 blocks (5m), Mode 3: 30 blocks (30m)
         int mode_blocks_per_upload = (current_op_mode == 1) ? 6 : (current_op_mode == 3 ? 30 : 5);
         int mode_time_limit_ticks = (current_op_mode == 1) ? 6 : (current_op_mode == 3 ? 180 : 30); // 1m, 30m, 5m
+
+        // Periodic status log
+        if (ticksPassedSinceUpload % 6 == 0) {
+            int qc = 0;
+            if (xSemaphoreTake(g_queue_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+                qc = tx_queue_count;
+                xSemaphoreGive(g_queue_mutex);
+            }
+            Serial.printf("[UPLOAD] tick=%d/%d queue=%d/%d wifi=%s\n",
+                          ticksPassedSinceUpload, mode_time_limit_ticks,
+                          qc, mode_blocks_per_upload,
+                          WiFi.status() == WL_CONNECTED ? "OK" : "DOWN");
+        }
 
         // Modem Power Management (Turn on 3 mins / 18 ticks before upload in Mode 3)
         bool need_modem = (current_op_mode != 3) || 
@@ -557,10 +603,13 @@ void uploadTask(void *pvParams) {
                 xSemaphoreGive(g_queue_mutex);
             }
 
+            Serial.printf("[UPLOAD] Attempting upload: %d blocks\n", c);
+
             bool is_upload_successful = true;
             if (c > 0) {
-                bool success = uploadFiveMinPayload(copy_q, c, "ota_initial_data");
+                bool success = uploadFiveMinPayload(copy_q, c, "ota_initial_data_v2");
                 if (success) {
+                    Serial.printf("[UPLOAD] SUCCESS: %d blocks sent.\n", c);
                     if (xSemaphoreTake(g_queue_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
                         // Shift remaining items that were added during upload
                         int new_items = tx_queue_count - c;
@@ -579,10 +628,11 @@ void uploadTask(void *pvParams) {
                     // DO NOT reset ticksPassedSinceUpload. Modem stays ON and retries immediately next tick.
                 }
             } else {
-                 ticksPassedSinceUpload = 0; // Empty queue, reset timer
+                // Queue empty — do NOT reset timer, check again next tick
+                Serial.println("[UPLOAD] Queue empty at upload time. Will retry next tick.");
             }
 
-            if (is_upload_successful && pending_ota_update && rtdb_target_url != "" && rtdb_target_url != "null") {
+            if (is_upload_successful && c > 0 && pending_ota_update && rtdb_target_url != "" && rtdb_target_url != "null") {
                 if (current_ota_state == OTA_IDLE) {
                     current_ota_state = OTA_START_DOWNLOAD;
                 }
@@ -641,9 +691,13 @@ void setup() {
     
     // Sample sensors once
     float t=0, h=0, r=0, bv=0, bi=0, sv=0, si=0;
-    if (node.readHoldingRegisters(0x0000, 2) == node.ku8MBSuccess) {
-        h = node.getResponseBuffer(0) / 10.0f;
-        t = node.getResponseBuffer(1) / 10.0f;
+    for (int retry = 0; retry < 3; retry++) {
+        if (node.readHoldingRegisters(0x0000, 2) == node.ku8MBSuccess) {
+            h = node.getResponseBuffer(0) / 10.0f;
+            t = node.getResponseBuffer(1) / 10.0f;
+            break;
+        }
+        delay(100);
     }
     r = RainSensor.getRainfall();
     bv = ina_batt.getBusVoltage_V();
@@ -664,7 +718,7 @@ void setup() {
     initial_q[0] = initial_b;
     uploadFiveMinPayload(initial_q, 1, "startup");
 
-    xTaskCreatePinnedToCore(sensorTask, "SensorTsk", 8192, NULL, 3, NULL, 1);
+    xTaskCreatePinnedToCore(sensorTask, "SensorTsk", 12288, NULL, 3, NULL, 1);
     xTaskCreatePinnedToCore(uploadTask, "UploadTsk", 16384, NULL, 2, NULL, 0);
     xTaskCreatePinnedToCore(otaTask, "OtaTsk", 8192, NULL, 1, NULL, 0);
 }
