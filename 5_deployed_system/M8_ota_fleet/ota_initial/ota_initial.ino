@@ -92,6 +92,7 @@ SemaphoreHandle_t g_queue_mutex;
 SemaphoreHandle_t g_sd_mutex;
 
 int current_op_mode = 2; // 1: High Alert, 2: Nominal, 3: Power Saving
+bool is_modem_on = true; // State tracker for WIFI_POWER_PIN
 
 // Telemetry state
 uint32_t g_send_success = 0;
@@ -448,6 +449,24 @@ void uploadTask(void *pvParams) {
         int mode_blocks_per_upload = (current_op_mode == 1) ? 6 : (current_op_mode == 3 ? 30 : 5);
         int mode_time_limit_ticks = (current_op_mode == 1) ? 6 : (current_op_mode == 3 ? 180 : 30); // 1m, 30m, 5m
 
+        // Modem Power Management (Turn on 3 mins / 18 ticks before upload in Mode 3)
+        bool need_modem = (current_op_mode != 3) || 
+                          (mode_time_limit_ticks - ticksPassedSinceUpload <= 18) ||
+                          (current_ota_state != OTA_IDLE);
+
+        if (need_modem && !is_modem_on) {
+            Serial.println("[POWER] Turning LTE Modem ON...");
+            digitalWrite(WIFI_POWER_PIN, HIGH);
+            is_modem_on = true;
+            // Delay a bit locally before forcing reconnect to avoid instant failure spam
+            vTaskDelay(pdMS_TO_TICKS(2000));
+        } else if (!need_modem && is_modem_on) {
+            Serial.println("[POWER] Turning LTE Modem OFF (Power Save)...");
+            WiFi.disconnect();
+            digitalWrite(WIFI_POWER_PIN, LOW);
+            is_modem_on = false;
+        }
+
         bool shouldUpload = false;
         if (current_ota_state == OTA_IDLE && xSemaphoreTake(g_queue_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
              // Upload if queue reached threshold or time limit passed
@@ -457,35 +476,52 @@ void uploadTask(void *pvParams) {
             xSemaphoreGive(g_queue_mutex);
         }
 
-        // Handle WiFi Reconnection if disconnected
-        if (WiFi.status() != WL_CONNECTED) {
-            Serial.println("[WIFI] Connection lost. Reconnecting...");
-            WiFi.disconnect();
-            WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+        // Handle WiFi Reconnection if disconnected (only if modem is actively powered)
+        if (is_modem_on && WiFi.status() != WL_CONNECTED) {
+            static int wifi_retry_ticks = 0;
+            if (wifi_retry_ticks++ % 3 == 0) { // Try every 30s
+                Serial.println("[WIFI] Connection lost. Reconnecting...");
+                WiFi.disconnect();
+                WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+            }
         }
 
-        if (WiFi.status() == WL_CONNECTED && !shouldUpload && (ticksPassedSinceUpload % 3 == 0)) {
+        if (is_modem_on && WiFi.status() == WL_CONNECTED && !shouldUpload && (ticksPassedSinceUpload % 3 == 0)) {
             fetchOTAConfig(); // Fallback polling if idle roughly every 30s
         }
 
-        if (shouldUpload && WiFi.status() == WL_CONNECTED && current_ota_state == OTA_IDLE) {
+        if (shouldUpload && is_modem_on && WiFi.status() == WL_CONNECTED && current_ota_state == OTA_IDLE) {
             MinuteBlock copy_q[60];
             int c = 0;
             if (xSemaphoreTake(g_queue_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
                 c = tx_queue_count;
                 for (int i=0; i<c; i++) copy_q[i] = tx_queue[i];
-                tx_queue_count = 0; // Clear
+                // Do NOT clear queue yet to preserve data on failure
                 xSemaphoreGive(g_queue_mutex);
             }
 
             if (c > 0) {
                 bool success = uploadFiveMinPayload(copy_q, c, "ota_initial_data");
-                if (!success) {
-                    Serial.println("[UPLOAD] Firestore patch failed.");
-                    // Guardrail: put it back if queue is empty (optional complexity omitted for now)
+                if (success) {
+                    if (xSemaphoreTake(g_queue_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                        // Shift remaining items that were added during upload
+                        int new_items = tx_queue_count - c;
+                        if (new_items > 0) {
+                            for (int i=0; i<new_items; i++) {
+                                tx_queue[i] = tx_queue[c + i];
+                            }
+                        }
+                        tx_queue_count = new_items > 0 ? new_items : 0;
+                        xSemaphoreGive(g_queue_mutex);
+                    }
+                    ticksPassedSinceUpload = 0;
+                } else {
+                    Serial.println("[UPLOAD] Firestore patch failed. Retaining queue for next tick.");
+                    // DO NOT reset ticksPassedSinceUpload. Modem stays ON and retries immediately next tick.
                 }
+            } else {
+                 ticksPassedSinceUpload = 0; // Empty queue, reset timer
             }
-            ticksPassedSinceUpload = 0;
 
             if (pending_ota_update && rtdb_target_url != "" && rtdb_target_url != "null") {
                 if (current_ota_state == OTA_IDLE) {
