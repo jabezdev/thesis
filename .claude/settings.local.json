@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p \"c:/Users/ayson/Projects/git/thesis/5_deployed_system/M3_node_firmware/m3_v0.1\")",
+      "Bash(cp \"c:/Users/ayson/Projects/git/thesis/5_deployed_system/M8_ota_fleet/ota_initial/ota_initial.ino\" \"c:/Users/ayson/Projects/git/thesis/5_deployed_system/M3_node_firmware/m3_v0.1/m3_v0.1.ino\")"
+    ]
+  }
+}
