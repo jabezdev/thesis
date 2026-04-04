@@ -40,7 +40,7 @@
 // Firebase Firestore (REST API - Telemetry)
 const char* FIRESTORE_BASE = "https://firestore.googleapis.com/v1/projects/panahon-live/databases/(default)/documents";
 
-const String FIRMWARE_VERSION = "v0.2";
+const String FIRMWARE_VERSION = "v0.2.1";
 const String NODE_ID_OVERRIDE = "node_1"; // "" = use MAC address
 
 // PINS
@@ -57,6 +57,7 @@ const String NODE_ID_OVERRIDE = "node_1"; // "" = use MAC address
 
 // NTP sync interval (wall-clock based)
 const uint32_t NTP_SYNC_INTERVAL_MS = 6UL * 60UL * 60UL * 1000UL; // 6 hours
+const uint32_t OTA_READ_IDLE_TIMEOUT_MS = 30000UL; // abort stalled OTA read after 30s without progress
 
 // ── Hardware Objects ───────────────────────────────────────────────────────────
 ModbusMaster     node;
@@ -249,6 +250,9 @@ void otaTask(void *pvParams) {
             int    total_written = 0;
 
             if (xSemaphoreTake(g_sd_mutex, portMAX_DELAY) == pdTRUE) {
+                if (SD.exists("/update.bin")) {
+                    SD.remove("/update.bin");
+                }
                 File file = SD.open("/update.bin", FILE_WRITE);
                 if (!file) {
                     xSemaphoreGive(g_sd_mutex);
@@ -261,6 +265,7 @@ void otaTask(void *pvParams) {
 
                 uint8_t buff[2048];
                 int     remaining = content_len;
+                uint32_t last_progress_ms = millis();
                 setOTAState(OTA_DOWNLOADING);
 
                 while (http.connected() && (remaining > 0 || content_len == -1)) {
@@ -275,8 +280,13 @@ void otaTask(void *pvParams) {
                             break;
                         }
                         total_written += c;
+                        last_progress_ms = millis();
                         if (content_len > 0) remaining -= c;
                     } else {
+                        if ((millis() - last_progress_ms) > OTA_READ_IDLE_TIMEOUT_MS) {
+                            Serial.println("[OTA] Download idle timeout.");
+                            break;
+                        }
                         vTaskDelay(pdMS_TO_TICKS(50));
                     }
                 }
@@ -374,10 +384,16 @@ void fetchOTAConfig() {
             if (doc.containsKey("target_version")) rtdb_target_version  = doc["target_version"].as<String>();
             if (doc.containsKey("target_md5"))     rtdb_target_md5      = doc["target_md5"].as<String>();
 
+            if (current_op_mode < 1 || current_op_mode > 3) {
+                current_op_mode = 2;
+            }
+
             if (rtdb_target_version != "" && rtdb_target_version != FIRMWARE_VERSION &&
                 rtdb_target_version != failed_ota_version &&
                 rtdb_target_url != "" && rtdb_target_url != "null") {
                 pending_ota_update = true;
+            } else {
+                pending_ota_update = false;
             }
         }
     }
@@ -722,27 +738,29 @@ void uploadTask(void *pvParams) {
 
             MinuteBlock copy_q[60];
             int c = 0;
+            int send_count = 0;
             if (xSemaphoreTake(g_queue_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
                 c = tx_queue_count;
-                for (int i = 0; i < c; i++) copy_q[i] = tx_queue[i];
+                send_count = (c > mode_blocks_per_upload) ? mode_blocks_per_upload : c;
+                for (int i = 0; i < send_count; i++) copy_q[i] = tx_queue[i];
                 xSemaphoreGive(g_queue_mutex);
             }
 
-            if (c == 0) {
+            if (send_count == 0) {
                 // Queue was empty — reset timer so we stop hammering upload
                 Serial.println("[UPLOAD] Queue empty at upload time. Resetting timer.");
                 ticksPassedSinceUpload = 0;
             } else {
-                Serial.printf("[UPLOAD] Uploading %d blocks...\n", c);
-                bool success = uploadFiveMinPayload(copy_q, c, "node_data_v1");
+                Serial.printf("[UPLOAD] Uploading %d blocks (queued=%d)...\n", send_count, c);
+                bool success = uploadFiveMinPayload(copy_q, send_count, "node_data_v1");
 
                 if (success) {
-                    Serial.printf("[UPLOAD] SUCCESS: %d blocks sent.\n", c);
+                    Serial.printf("[UPLOAD] SUCCESS: %d blocks sent.\n", send_count);
                     if (xSemaphoreTake(g_queue_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                        int new_items = tx_queue_count - c;
+                        int new_items = tx_queue_count - send_count;
                         if (new_items > 0) {
                             for (int i = 0; i < new_items; i++) {
-                                tx_queue[i] = tx_queue[c + i];
+                                tx_queue[i] = tx_queue[send_count + i];
                             }
                         }
                         tx_queue_count = (new_items > 0) ? new_items : 0;
