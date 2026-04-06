@@ -1,7 +1,7 @@
 // ── Project Sipat Banwa — Node Firmware v0.3 ────────────────────────────────
 // Block average logic: 1s sample -> 1-min avg -> 5-min batch upload
 //
-// Changes from v0.2:
+// Changes from v0.2 → v0.3:
 //   - WiFi connect timeout in setup() (30s max, then proceed without WiFi)
 //   - SD.begin() failure check with g_sd_available flag
 //   - RainSensor.begin() failure check
@@ -12,9 +12,16 @@
 //   - OTA config check reduced from every 30s to once per hour
 //   - Heartbeat/ping function (configurable interval via RTDB, collection: heartbeat_v2)
 //   - NTP sync moved outside upload-success block
-//   - wifi_retry_ticks reset after WiFi reconnects
 //   - Sensor task + SD logging runs regardless of WiFi status (SD-first priority)
 //   - WiFi reconnection attempts in upload task (non-blocking)
+//
+// Changes v0.3 → v0.3.5:
+//   - FIX: SD logging no longer skipped during OTA (removed OTA_IDLE guard)
+//   - FIX: OTA download uses per-chunk SD mutex instead of holding for entire download
+//   - FIX: OTA flash mutex changed from portMAX_DELAY to 30s timeout
+//   - FIX: wifi_retry_ticks reset on reconnect (was stale across disconnect cycles)
+//   - FIX: parsePendingLine buffer increased from 128 to 256 bytes
+//   - SD mutex timeout in sensorTask increased from 500ms to 10s for OTA coexistence
 
 #include <Wire.h>
 #include <SPI.h>
@@ -45,7 +52,7 @@
 // Firebase Firestore (REST API - Telemetry)
 const char* FIRESTORE_BASE = "https://firestore.googleapis.com/v1/projects/panahon-live/databases/(default)/documents";
 
-const String FIRMWARE_VERSION = "v0.3.0";
+const String FIRMWARE_VERSION = "v0.3.5";
 const String NODE_ID_OVERRIDE = "node_1"; // "" = use MAC address
 
 // PINS
@@ -68,7 +75,7 @@ const uint32_t WIFI_CONNECT_TIMEOUT_MS    = 30000UL;                      // 30 
 const uint32_t HEAP_CRITICAL_BYTES        = 10240UL;                      // 10KB - restart if below
 
 // Heartbeat defaults (overridable via RTDB)
-const int HEARTBEAT_DEFAULT_INTERVAL_MIN  = 5;  // minutes, 0 = disabled
+const int HEARTBEAT_DEFAULT_INTERVAL_MIN  = 30; // minutes, 0 = disabled (raised from 5→30 to reduce RTDB churn)
 
 // ── Hardware Objects ───────────────────────────────────────────────────────────
 ModbusMaster     node;
@@ -117,6 +124,8 @@ struct MinuteBlock {
     float    solar_v_avg;
     float    solar_i_avg;
     int      sample_count;
+    int      op_mode;    // operational mode at block close (1/2/3)
+    int      wifi_rssi;  // WiFi RSSI at block close; 0 = disconnected
 };
 
 // Queue for MinuteBlocks (cap 60 = up to 30 mins of backlog)
@@ -145,6 +154,11 @@ uint32_t g_upload_latency_ms           = 0;
 uint32_t g_sd_max_write_latency_ms     = 0;
 uint32_t g_wifi_reconnect_count        = 0;  // NEW: track WiFi recovery events
 uint32_t g_heap_restart_count          = 0;  // NEW: track heap-watchdog restarts (persisted in NVS if needed)
+
+// Pending upload tracking (persistent outbox via /pending.csv)
+uint32_t g_pending_cursor = 0;  // lines uploaded from pending.csv (excluding header)
+uint32_t g_pending_total  = 0;  // total data lines in pending.csv
+const int PENDING_BATCH_SIZE = 5;  // blocks to re-upload per catch-up cycle
 
 // NTP time tracking
 const long  GMT_OFFSET_SEC      = 28800; // UTC+8
@@ -294,13 +308,17 @@ void otaTask(void *pvParams) {
             bool   write_ok      = false;
             int    total_written = 0;
 
-            if (xSemaphoreTake(g_sd_mutex, portMAX_DELAY) == pdTRUE) {
-                if (SD.exists("/update.bin")) {
-                    SD.remove("/update.bin");
-                }
-                File file = SD.open("/update.bin", FILE_WRITE);
-                if (!file) {
+            // FIX v0.3.5: Per-chunk SD mutex — sensor SD writes can interleave during OTA.
+            {
+                File file;
+                bool open_ok = false;
+                if (xSemaphoreTake(g_sd_mutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                    if (SD.exists("/update.bin")) SD.remove("/update.bin");
+                    file = SD.open("/update.bin", FILE_WRITE);
+                    open_ok = (bool)file;
                     xSemaphoreGive(g_sd_mutex);
+                }
+                if (!open_ok) {
                     client.stop();
                     http.end();
                     reportStatusToRTDB("failed", "SD Write Error");
@@ -319,8 +337,17 @@ void otaTask(void *pvParams) {
                     if (avail > 0) {
                         int c = stream->readBytes(buff, min((size_t)sizeof(buff), avail));
                         if (c <= 0) break;
-                        if (file.write(buff, c) != (size_t)c) {
-                            Serial.println("[OTA] SD write failed mid-download.");
+                        // Brief mutex hold per chunk — sensor SD writes can interleave
+                        if (xSemaphoreTake(g_sd_mutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                            bool wr_ok = (file.write(buff, c) == (size_t)c);
+                            xSemaphoreGive(g_sd_mutex);
+                            if (!wr_ok) {
+                                Serial.println("[OTA] SD write failed mid-download.");
+                                total_written = -1;
+                                break;
+                            }
+                        } else {
+                            Serial.println("[OTA] SD mutex timeout mid-download.");
                             total_written = -1;
                             break;
                         }
@@ -335,19 +362,17 @@ void otaTask(void *pvParams) {
                         vTaskDelay(pdMS_TO_TICKS(50));
                     }
                 }
-                file.close();
-                xSemaphoreGive(g_sd_mutex);
+                // Close file under mutex
+                if (xSemaphoreTake(g_sd_mutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+                    file.close();
+                    xSemaphoreGive(g_sd_mutex);
+                } else {
+                    file.close();  // close anyway to prevent file handle leak
+                }
 
                 bool size_ok = (content_len == -1) ? (total_written > 0)
                                                     : (total_written == content_len);
                 write_ok = (total_written > 0) && size_ok;
-            } else {
-                client.stop();
-                http.end();
-                reportStatusToRTDB("failed", "SD Mutex Timeout");
-                resetOTAFailed("SD Mutex Timeout");
-                vTaskDelay(pdMS_TO_TICKS(2000));
-                continue;
             }
 
             client.stop();  // FIX: explicit TLS cleanup
@@ -364,7 +389,8 @@ void otaTask(void *pvParams) {
         } else if (state == OTA_FLASHING) {
             reportStatusToRTDB("flashing", "Local SD Update");
 
-            if (xSemaphoreTake(g_sd_mutex, portMAX_DELAY) == pdTRUE) {
+            // FIX v0.3.5: 30s timeout instead of portMAX_DELAY
+            if (xSemaphoreTake(g_sd_mutex, pdMS_TO_TICKS(30000)) == pdTRUE) {
                 File updateFile = SD.open("/update.bin");
                 if (!updateFile) {
                     xSemaphoreGive(g_sd_mutex);
@@ -511,6 +537,10 @@ void sendHeartbeat() {
     fields["mb_errs"]["integerValue"]   = String(g_modbus_crc_error_count);
     fields["i2c_errs"]["integerValue"]  = String(g_i2c_error_count);
     fields["wifi_reconn"]["integerValue"] = String(g_wifi_reconnect_count);
+    fields["pending_cursor"]["integerValue"] = String(g_pending_cursor);
+    fields["pending_total"]["integerValue"]  = String(g_pending_total);
+    fields["pending_backlog"]["integerValue"] = String(
+        g_pending_total > g_pending_cursor ? g_pending_total - g_pending_cursor : 0);
 
     // Check for overflow before sending
     if (doc.overflowed()) {
@@ -534,9 +564,7 @@ void sendHeartbeat() {
     }
 
     g_last_heartbeat_ms = millis();
-
-    // Right after heartbeat, re-fetch config to pick up interval/mode changes
-    fetchOTAConfig();
+    // Config is fetched by the standalone hourly OTA poll — no need to double-fetch here.
 }
 
 // ── Critical Shutdown ─────────────────────────────────────────────────────────
@@ -582,18 +610,297 @@ void appendToSD(const char* path, const MinuteBlock& b) {
     if (!SD.exists(path)) {
         File fHeader = SD.open(path, FILE_WRITE);
         if (fHeader) {
-            fHeader.println("timestamp,uptime_ms,temp_avg,hum_avg,rain_sum,batt_v,batt_i,solar_v,solar_i,sample_count");
+            fHeader.println("timestamp,uptime_ms,temp_avg,hum_avg,rain_sum,batt_v,batt_i,solar_v,solar_i,sample_count,op_mode,wifi_rssi");
             fHeader.close();
         }
     }
     File f = SD.open(path, FILE_APPEND);
     if (!f) { g_sd_failures++; return; }
-    f.printf("%s,%lu,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d\n",
+    f.printf("%s,%lu,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%d,%d\n",
              b.timestamp, b.uptime_ms,
              b.temp_avg, b.hum_avg, b.rain_sum,
              b.batt_v_avg, b.batt_i_avg, b.solar_v_avg, b.solar_i_avg,
-             b.sample_count);
+             b.sample_count, b.op_mode, b.wifi_rssi);
     f.close();
+}
+
+// ── Health Snapshot Log ───────────────────────────────────────────────────────
+// Written to /node_health.csv after every upload attempt.
+// Captures all cumulative counters so post-hoc analysis can spot degradation trends.
+void appendHealthToSD(bool upload_ok, int queue_depth) {
+    if (!g_sd_available) return;
+    if (xSemaphoreTake(g_sd_mutex, pdMS_TO_TICKS(500)) != pdTRUE) {
+        g_sd_failures++; return;
+    }
+    const char* path = "/node_health.csv";
+    if (!SD.exists(path)) {
+        File fh = SD.open(path, FILE_WRITE);
+        if (fh) {
+            fh.println("timestamp,uptime_ms,op_mode,wifi_rssi,free_heap,min_heap,"
+                       "send_ok,send_fail,sd_fail,mb_errs,i2c_errs,"
+                       "http_2xx,http_errs,upload_lat_ms,sd_lat_ms,"
+                       "wifi_reconn,queue_depth,upload_result");
+            fh.close();
+        }
+    }
+    File f = SD.open(path, FILE_APPEND);
+    if (f) {
+        char ts[20]; getTimeStamp(ts, sizeof(ts));
+        int rssi = (WiFi.status() == WL_CONNECTED) ? (int)WiFi.RSSI() : 0;
+        f.printf("%s,%lu,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%s\n",
+                 ts, millis(), current_op_mode, rssi,
+                 esp_get_free_heap_size(), esp_get_minimum_free_heap_size(),
+                 g_send_success, g_send_fail, g_sd_failures,
+                 g_modbus_crc_error_count, g_i2c_error_count,
+                 g_http_2xx_count, g_http_transport_error_count,
+                 g_upload_latency_ms, g_sd_max_write_latency_ms,
+                 g_wifi_reconnect_count, queue_depth,
+                 upload_ok ? "OK" : "FAIL");
+        f.close();
+    } else {
+        g_sd_failures++;
+    }
+    xSemaphoreGive(g_sd_mutex);
+}
+
+// ── Event Log ─────────────────────────────────────────────────────────────────
+// Written to /node_events.csv on significant state transitions.
+// Events: BOOT, WIFI_UP, WIFI_DOWN, UPLOAD_OK, UPLOAD_FAIL, MODE_CHANGE, OTA_*
+void appendEventToSD(const char* event, const char* detail = "") {
+    if (!g_sd_available) return;
+    if (xSemaphoreTake(g_sd_mutex, pdMS_TO_TICKS(500)) != pdTRUE) {
+        g_sd_failures++; return;
+    }
+    const char* path = "/node_events.csv";
+    if (!SD.exists(path)) {
+        File fh = SD.open(path, FILE_WRITE);
+        if (fh) {
+            fh.println("timestamp,uptime_ms,event,detail");
+            fh.close();
+        }
+    }
+    File f = SD.open(path, FILE_APPEND);
+    if (f) {
+        char ts[20]; getTimeStamp(ts, sizeof(ts));
+        f.printf("%s,%lu,%s,%s\n", ts, millis(), event, detail);
+        f.close();
+    } else {
+        g_sd_failures++;
+    }
+    xSemaphoreGive(g_sd_mutex);
+}
+
+// ── Pending Upload Outbox ─────────────────────────────────────────────────────
+// /pending.csv = persistent outbox of blocks waiting to be uploaded.
+// Survives reboots — the system re-uploads missed blocks automatically after reconnect.
+// /pending_cursor.txt = number of lines already uploaded from pending.csv.
+//
+// SD PRIORITY: appendToPendingSD() is called inside sensorTask's SD mutex block,
+// BEFORE the in-memory tx_queue enqueue. SD writes can never be starved by uploads.
+
+// Called with g_sd_mutex ALREADY HELD by caller (sensorTask).
+void appendToPendingSD(const MinuteBlock& b) {
+    if (!g_sd_available) return;
+    const char* path = "/pending.csv";
+    if (!SD.exists(path)) {
+        File fh = SD.open(path, FILE_WRITE);
+        if (fh) {
+            fh.println("timestamp,uptime_ms,temp_avg,hum_avg,rain_sum,batt_v,batt_i,solar_v,solar_i,sample_count,op_mode,wifi_rssi");
+            fh.close();
+        }
+    }
+    File f = SD.open(path, FILE_APPEND);
+    if (f) {
+        f.printf("%s,%lu,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%d,%d\n",
+                 b.timestamp, b.uptime_ms,
+                 b.temp_avg, b.hum_avg, b.rain_sum,
+                 b.batt_v_avg, b.batt_i_avg, b.solar_v_avg, b.solar_i_avg,
+                 b.sample_count, b.op_mode, b.wifi_rssi);
+        f.close();
+        g_pending_total++;
+    } else {
+        g_sd_failures++;
+    }
+}
+
+// Parse a CSV line from pending.csv back into a MinuteBlock.
+// Uses a stack buffer — no heap allocation.
+bool parsePendingLine(const String& line, MinuteBlock& b) {
+    if (line.length() == 0 || line.startsWith("t")) return false;  // skip blank/header
+    char buf[256];  // FIX v0.3.5: was 128, too small for lines with full-precision floats
+    if (line.length() >= sizeof(buf)) return false;
+    line.toCharArray(buf, sizeof(buf));
+    memset(&b, 0, sizeof(b));
+    int field = 0;
+    char* token = strtok(buf, ",");
+    while (token && field < 12) {
+        switch (field) {
+            case 0:  strncpy(b.timestamp, token, sizeof(b.timestamp)-1); break;
+            case 1:  b.uptime_ms    = strtoul(token, nullptr, 10); break;
+            case 2:  b.temp_avg     = atof(token); break;
+            case 3:  b.hum_avg      = atof(token); break;
+            case 4:  b.rain_sum     = atof(token); break;
+            case 5:  b.batt_v_avg   = atof(token); break;
+            case 6:  b.batt_i_avg   = atof(token); break;
+            case 7:  b.solar_v_avg  = atof(token); break;
+            case 8:  b.solar_i_avg  = atof(token); break;
+            case 9:  b.sample_count = atoi(token); break;
+            case 10: b.op_mode      = atoi(token); break;
+            case 11: b.wifi_rssi    = atoi(token); break;
+        }
+        token = strtok(nullptr, ",");
+        field++;
+    }
+    return (field >= 10);
+}
+
+// Load pending cursor on boot (restore after reboot).
+void loadPendingCursor() {
+    if (!g_sd_available) return;
+    // Restore cursor from file
+    File fc = SD.open("/pending_cursor.txt", FILE_READ);
+    if (fc) {
+        g_pending_cursor = (uint32_t)fc.readStringUntil('\n').toInt();
+        fc.close();
+    }
+    // Count total data lines in pending.csv
+    g_pending_total = 0;
+    File csv = SD.open("/pending.csv", FILE_READ);
+    if (csv) {
+        while (csv.available()) {
+            csv.readStringUntil('\n');
+            g_pending_total++;
+        }
+        csv.close();
+        if (g_pending_total > 0) g_pending_total--;  // subtract header line
+    }
+    // Clamp cursor in case file shrank
+    if (g_pending_cursor > g_pending_total) g_pending_cursor = g_pending_total;
+    uint32_t backlog = g_pending_total - g_pending_cursor;
+    Serial.printf("[PENDING] Loaded: cursor=%lu total=%lu backlog=%lu\n",
+                  g_pending_cursor, g_pending_total, backlog);
+    if (backlog > 0) appendEventToSD("BOOT_BACKLOG", String(backlog).c_str());
+}
+
+// Persist cursor to /pending_cursor.txt. Call with g_sd_mutex held.
+void savePendingCursor() {
+    if (!g_sd_available) return;
+    File f = SD.open("/pending_cursor.txt", FILE_WRITE);  // overwrite, not append
+    if (f) { f.printf("%lu\n", g_pending_cursor); f.close(); }
+}
+
+// Re-upload one batch of missed blocks from pending.csv.
+// Uses a deterministic docId based on first block timestamp so the same batch
+// produces the same Firestore document (idempotent on retry — no duplicates).
+// Returns: true if more backlog remains after this call.
+bool uploadPendingBlocks() {
+    if (!g_sd_available || g_pending_cursor >= g_pending_total) return false;
+    if (WiFi.status() != WL_CONNECTED) return true;  // more pending, but no WiFi
+
+    // Read the batch under SD mutex — keeps the mutex held for the entire file read
+    // to prevent sensorTask from concurrently opening pending.csv for APPEND while
+    // we have it open for READ (concurrent FAT handles on same file = undefined behavior).
+    // The read of up to PENDING_BATCH_SIZE lines is fast (< 100ms even for large cursors).
+    MinuteBlock batch[PENDING_BATCH_SIZE];
+    int count = 0;
+
+    if (xSemaphoreTake(g_sd_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        File f = SD.open("/pending.csv", FILE_READ);
+        if (f) {
+            f.readStringUntil('\n');  // skip header
+            for (uint32_t i = 0; i < g_pending_cursor; i++) {
+                if (!f.available()) break;
+                f.readStringUntil('\n');  // seek past already-uploaded lines
+            }
+            while (f.available() && count < PENDING_BATCH_SIZE) {
+                String line = f.readStringUntil('\n');
+                line.trim();
+                if (line.length() > 0 && parsePendingLine(line, batch[count])) count++;
+            }
+            f.close();
+        }
+        xSemaphoreGive(g_sd_mutex);  // release AFTER close — no open file handles remain
+    }
+
+    if (count == 0) return false;
+
+    // Build deterministic docId from first block's timestamp
+    // so re-uploading the same blocks always PATCHes the same Firestore document.
+    String ts0 = String(batch[0].timestamp);
+    ts0.replace(" ", "_"); ts0.replace(":", "-");
+    if (ts0 == "WAITING_SYNC" || ts0.length() < 10)
+        ts0 = "u" + String(batch[0].uptime_ms);  // fallback if NTP not synced
+    String docId = NODE_ID + "_r_" + ts0;
+
+    Serial.printf("[PENDING] Re-uploading %d blocks from cursor=%lu (doc=%s)\n",
+                  count, g_pending_cursor, docId.c_str());
+
+    // Use a separate Firestore collection to keep backlog data distinct
+    WiFiClientSecure client; client.setInsecure();
+    HTTPClient http;
+    http.begin(client, firestoreUrl("node_pending_0v3", docId.c_str()));
+    http.addHeader("Content-Type", "application/json");
+
+    JsonDocument doc;
+    JsonObject fields = doc["fields"].to<JsonObject>();
+    fields["node_id"]["stringValue"]   = NODE_ID;
+    fields["timestamp"]["stringValue"] = batch[count-1].timestamp;
+    fields["is_reupload"]["booleanValue"] = true;
+    fields["reupload_cursor"]["integerValue"] = String(g_pending_cursor);
+
+    JsonArray history = fields["history"]["arrayValue"]["values"].to<JsonArray>();
+    for (int i = 0; i < count; i++) {
+        JsonObject val = history.add<JsonObject>()["mapValue"]["fields"].to<JsonObject>();
+        val["ts"]["stringValue"]         = batch[i].timestamp;
+        val["uptime_ms"]["integerValue"] = String(batch[i].uptime_ms);
+        val["temp"]["doubleValue"]       = batch[i].temp_avg;
+        val["hum"]["doubleValue"]        = batch[i].hum_avg;
+        val["rain"]["doubleValue"]       = batch[i].rain_sum;
+        val["batt_v"]["doubleValue"]     = batch[i].batt_v_avg;
+        val["batt_i"]["doubleValue"]     = batch[i].batt_i_avg;
+        val["solar_v"]["doubleValue"]    = batch[i].solar_v_avg;
+        val["solar_i"]["doubleValue"]    = batch[i].solar_i_avg;
+        val["samples"]["integerValue"]   = String(batch[i].sample_count);
+    }
+
+    if (doc.overflowed()) {
+        Serial.println("[PENDING] JSON overflow — skipping batch, advancing cursor.");
+        client.stop(); http.end();
+        g_pending_cursor = min(g_pending_cursor + (uint32_t)count, g_pending_total);
+        if (xSemaphoreTake(g_sd_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+            savePendingCursor(); xSemaphoreGive(g_sd_mutex);
+        }
+        return (g_pending_cursor < g_pending_total);
+    }
+
+    String payload; serializeJson(doc, payload);
+    int code = http.PATCH(payload);
+    client.stop(); http.end();
+
+    if (code >= 200 && code < 300) {
+        g_pending_cursor = min(g_pending_cursor + (uint32_t)count, g_pending_total);
+        if (xSemaphoreTake(g_sd_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+            savePendingCursor();
+            // Clean up if all uploaded
+            if (g_pending_cursor >= g_pending_total) {
+                SD.remove("/pending.csv");
+                SD.remove("/pending_cursor.txt");
+                g_pending_cursor = 0;
+                g_pending_total  = 0;
+                Serial.println("[PENDING] All blocks uploaded — outbox cleared.");
+            }
+            xSemaphoreGive(g_sd_mutex);
+        }
+        Serial.printf("[PENDING] OK cursor=%lu/%lu remaining=%lu\n",
+                      g_pending_cursor, g_pending_total,
+                      g_pending_total > g_pending_cursor ? g_pending_total - g_pending_cursor : 0);
+        if (g_pending_cursor >= g_pending_total)
+            appendEventToSD("PENDING_CLEARED", "");
+        return (g_pending_cursor < g_pending_total);
+    } else {
+        Serial.printf("[PENDING] Re-upload failed (code=%d). Will retry next cycle.\n", code);
+        return true;
+    }
 }
 
 // ── Firestore Upload Logic ─────────────────────────────────────────────────────
@@ -712,9 +1019,13 @@ void sensorTask(void *pvParams) {
             if (bv < BATT_POWERSAVE_V && current_op_mode != 3) {
                 current_op_mode = 3;
                 Serial.printf("[MODE] Battery low (%.2fV) -> Mode 3 (Power Saving)\n", bv);
+                char det[32]; snprintf(det, sizeof(det), "bv=%.2f", bv);
+                appendEventToSD("MODE3_POWERSAVE", det);
             } else if (bv >= BATT_POWERSAVE_V && current_op_mode == 3) {
                 current_op_mode = 2;
                 Serial.println("[MODE] Battery recovered -> Mode 2 (Nominal)");
+                char det[32]; snprintf(det, sizeof(det), "bv=%.2f", bv);
+                appendEventToSD("MODE2_NOMINAL", det);
             }
         }
 
@@ -769,19 +1080,25 @@ void sensorTask(void *pvParams) {
             b.solar_v_avg  = sum_solar_v/ samples;
             b.solar_i_avg  = sum_solar_i/ samples;
             b.sample_count = samples;
+            b.op_mode      = current_op_mode;
+            b.wifi_rssi    = (WiFi.status() == WL_CONNECTED) ? (int)WiFi.RSSI() : 0;
 
             Serial.printf("[SENSOR] Block: T=%.1f H=%.1f R=%.2f ts=%s n=%d\n",
                           b.temp_avg, b.hum_avg, b.rain_sum, b.timestamp, b.sample_count);
 
-            // SD log — ALWAYS attempt (skip only during active OTA to avoid SD contention)
-            if (getOTAState() == OTA_IDLE) {
-                if (xSemaphoreTake(g_sd_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
-                    uint32_t sd_start = millis();
-                    appendToSD("/node_1min.csv", b);
-                    uint32_t sd_lat = millis() - sd_start;
-                    if (sd_lat > g_sd_max_write_latency_ms) g_sd_max_write_latency_ms = sd_lat;
-                    xSemaphoreGive(g_sd_mutex);
-                }
+            // SD log — ALWAYS first, before queue enqueue. SD is the ground truth.
+            // FIX v0.3.5: Removed OTA_IDLE guard — SD writes must NEVER be skipped.
+            // OTA now uses per-chunk mutex, so 10s timeout is sufficient.
+            if (xSemaphoreTake(g_sd_mutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+                uint32_t sd_start = millis();
+                appendToSD("/node_1min.csv", b);    // permanent record — never deleted
+                appendToPendingSD(b);               // upload outbox — consumed as uploaded
+                uint32_t sd_lat = millis() - sd_start;
+                if (sd_lat > g_sd_max_write_latency_ms) g_sd_max_write_latency_ms = sd_lat;
+                xSemaphoreGive(g_sd_mutex);
+            } else {
+                g_sd_failures++;
+                Serial.println("[SENSOR] WARNING: SD mutex timeout — block NOT written to SD!");
             }
 
             // Enqueue for upload
@@ -815,6 +1132,7 @@ void uploadTask(void *pvParams) {
     const TickType_t xFrequency    = pdMS_TO_TICKS(10 * 1000); // tick every 10s
     int ticksPassedSinceUpload     = 0;
     bool was_wifi_connected        = false;  // track WiFi state transitions
+    int64_t last_upload_slot       = -1;     // wall-clock upload slot; -1 = not yet initialized
 
     Serial.println("[UPLOAD] Task started.");
 
@@ -825,6 +1143,24 @@ void uploadTask(void *pvParams) {
         int mode_blocks_per_upload  = (current_op_mode == 1) ? 6  : (current_op_mode == 3) ? 30 : 5;
         int mode_time_limit_ticks   = (current_op_mode == 1) ? 6  : (current_op_mode == 3) ? 180 : 30;
         bool wifi_connected         = (WiFi.status() == WL_CONNECTED);
+
+        // ── Wall-clock slot for aligned uploads ──
+        // Slot = epoch / upload_period. Upload fires when slot number advances.
+        time_t now_wc; time(&now_wc);
+        struct tm* ti_wc       = localtime(&now_wc);
+        bool   time_valid      = (ti_wc->tm_year >= 120);  // year >= 2020
+        int    upload_period_s = (current_op_mode == 1) ? 60
+                               : (current_op_mode == 3) ? 1800 : 300;
+        int64_t current_slot   = time_valid ? ((int64_t)now_wc / upload_period_s) : -1;
+        int  secs_to_next_slot = time_valid
+                                 ? (upload_period_s - (int)((int64_t)now_wc % upload_period_s))
+                                 : 9999;
+        // First valid NTP: anchor slot to now so we wait for the NEXT boundary.
+        if (last_upload_slot == -1 && time_valid) {
+            last_upload_slot = current_slot;
+            Serial.printf("[UPLOAD] Slot anchor: slot=%lld secs_to_next=%d\n",
+                          (long long)current_slot, secs_to_next_slot);
+        }
 
         // Status log every 60s
         if (ticksPassedSinceUpload % 6 == 0) {
@@ -839,9 +1175,10 @@ void uploadTask(void *pvParams) {
         }
 
         // ── Modem power management ──
-        bool need_modem = (current_op_mode != 3) ||
-                          (mode_time_limit_ticks - ticksPassedSinceUpload <= 18) ||
-                          (getOTAState() != OTA_IDLE);
+        // Wake modem 3 min before upload slot in Mode 3; fall back to ticks if time invalid.
+        bool near_upload = time_valid ? (secs_to_next_slot <= 180)
+                                      : (mode_time_limit_ticks - ticksPassedSinceUpload <= 18);
+        bool need_modem  = (current_op_mode != 3) || near_upload || (getOTAState() != OTA_IDLE);
 
         if (need_modem && !is_modem_on) {
             Serial.println("[POWER] LTE Modem ON");
@@ -858,8 +1195,9 @@ void uploadTask(void *pvParams) {
         }
 
         // ── WiFi reconnection (non-blocking) ──
+        // FIX v0.3.5: moved static declaration out of if-block so we can reset on reconnect
+        static int wifi_retry_ticks = 0;
         if (is_modem_on && !wifi_connected) {
-            static int wifi_retry_ticks = 0;
             wifi_retry_ticks++;
             if (wifi_retry_ticks % 6 == 1) {  // Try every ~60s (was 30s — reduce churn)
                 Serial.println("[WIFI] Reconnecting...");
@@ -870,9 +1208,16 @@ void uploadTask(void *pvParams) {
 
         // Detect WiFi reconnection event
         wifi_connected = (WiFi.status() == WL_CONNECTED);  // re-read after possible reconnect
+        if (!wifi_connected && was_wifi_connected) {
+            Serial.println("[WIFI] Connection lost.");
+            appendEventToSD("WIFI_DOWN", "");
+        }
         if (wifi_connected && !was_wifi_connected) {
+            wifi_retry_ticks = 0;  // FIX v0.3.5: reset so next disconnect retries immediately
             g_wifi_reconnect_count++;
             Serial.printf("[WIFI] Reconnected! (total reconn=%d)\n", g_wifi_reconnect_count);
+            char det[16]; snprintf(det, sizeof(det), "rssi=%d", (int)WiFi.RSSI());
+            appendEventToSD("WIFI_UP", det);
             // Try NTP immediately on reconnect if we haven't synced recently
             if (g_last_ntp_sync_ms == 0 || (millis() - g_last_ntp_sync_ms) >= NTP_SYNC_INTERVAL_MS) {
                 setupNTP();
@@ -891,8 +1236,7 @@ void uploadTask(void *pvParams) {
         // ── OTA config poll — once per hour (reduced from every 30s) ──
         if (wifi_connected && is_modem_on && getOTAState() == OTA_IDLE) {
             if (g_last_ota_check_ms == 0 || (millis() - g_last_ota_check_ms) >= OTA_CHECK_INTERVAL_MS) {
-                // Only fetch if not recently fetched by heartbeat
-                fetchOTAConfig();
+                fetchOTAConfig();  // once per hour; heartbeat no longer re-fetches this
             }
         }
 
@@ -900,8 +1244,13 @@ void uploadTask(void *pvParams) {
         bool shouldUpload = false;
         if (getOTAState() == OTA_IDLE) {
             if (xSemaphoreTake(g_queue_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                if (tx_queue_count >= mode_blocks_per_upload ||
-                    ticksPassedSinceUpload >= mode_time_limit_ticks) {
+                // Primary: fire when wall-clock slot advances (aligned to 1:00, 1:05, …)
+                bool slot_advanced  = (time_valid && current_slot > last_upload_slot);
+                // Fallback: tick-based when NTP hasn't synced yet
+                bool fallback_ticks = (!time_valid && ticksPassedSinceUpload >= mode_time_limit_ticks);
+                // Safety: flush if queue is overflowing regardless of timing
+                bool queue_overflow = (tx_queue_count >= mode_blocks_per_upload);
+                if ((slot_advanced || fallback_ticks || queue_overflow) && tx_queue_count > 0) {
                     shouldUpload = true;
                 }
                 xSemaphoreGive(g_queue_mutex);
@@ -940,6 +1289,18 @@ void uploadTask(void *pvParams) {
                         xSemaphoreGive(g_queue_mutex);
                     }
                     ticksPassedSinceUpload = 0;
+                    last_upload_slot = current_slot;  // advance slot so we wait for the next boundary
+
+                    // Health snapshot + event log on success
+                    {
+                        int qd = 0;
+                        if (xSemaphoreTake(g_queue_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+                            qd = tx_queue_count; xSemaphoreGive(g_queue_mutex);
+                        }
+                        appendHealthToSD(true, qd);
+                        char det[24]; snprintf(det, sizeof(det), "sent=%d", send_count);
+                        appendEventToSD("UPLOAD_OK", det);
+                    }
 
                     // Trigger OTA if pending
                     if (pending_ota_update && rtdb_target_url != "" &&
@@ -948,7 +1309,23 @@ void uploadTask(void *pvParams) {
                     }
                 } else {
                     Serial.println("[UPLOAD] Failed. Retaining queue, retrying next tick.");
+                    // Health snapshot + event log on failure
+                    int qd = 0;
+                    if (xSemaphoreTake(g_queue_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+                        qd = tx_queue_count; xSemaphoreGive(g_queue_mutex);
+                    }
+                    appendHealthToSD(false, qd);
+                    appendEventToSD("UPLOAD_FAIL", "");
                 }
+            }
+        }
+
+        // ── Pending backlog re-upload — gradual catch-up after outage ──
+        // Runs after the regular upload block, one batch per tick (every 10s).
+        // Uses node_pending_0v3 collection with deterministic docId (idempotent).
+        if (wifi_connected && is_modem_on && getOTAState() == OTA_IDLE) {
+            if (g_pending_cursor < g_pending_total) {
+                uploadPendingBlocks();
             }
         }
 
@@ -1010,6 +1387,12 @@ void setup() {
     } else {
         Serial.println("[SD] Card OK.");
     }
+
+    // Log BOOT first — must be the first event in the event log.
+    appendEventToSD("BOOT", FIRMWARE_VERSION.c_str());
+
+    // Restore pending upload state (may log BOOT_BACKLOG after BOOT — correct order).
+    if (g_sd_available) loadPendingCursor();
 
     // ── WiFi connect with timeout (30s max) ──
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
