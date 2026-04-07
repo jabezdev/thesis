@@ -6,7 +6,17 @@ export default {
     "../../packages/ui/src/**/*.{js,ts,jsx,tsx}"
   ],
   theme: {
-    extend: {},
+    extend: {
+      animation: {
+        'spin-slow': 'spin 3s linear infinite',
+      },
+      keyframes: {
+        pulse: {
+          '0%, 100%': { opacity: 1 },
+          '50%': { opacity: .5 },
+        }
+      }
+    },
   },
   plugins: [],
 }
