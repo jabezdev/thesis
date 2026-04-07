@@ -1,8 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
-import { useQuery } from "convex/react"
-import { api } from "../../../convex/_generated/api"
 import { Card, Badge, Stats } from '@panahon/ui'
-import { Server, Activity, AlertTriangle, Wifi, Cpu, Sun, Zap, CloudOff, CheckCircle2 } from 'lucide-react'
+import { Server, Activity, Wifi, Cpu, Sun, Zap, CloudOff } from 'lucide-react'
 import { ref, onValue } from 'firebase/database'
 import { rtdb } from './firebase'
 import type { RawSensorData } from '@panahon/shared'
@@ -12,7 +10,8 @@ import type { RawSensorData } from '@panahon/shared'
  */
 
 export default function App() {
-  const nodes = useQuery(api.nodes.list);
+  const [nodeIds, setNodeIds] = useState<string[]>([]);
+  const [nodesMetadata, setNodesMetadata] = useState<Record<string, any>>({});
   const [latestData, setLatestData] = useState<Record<string, RawSensorData>>({});
   const [now, setNow] = useState(Date.now());
 
@@ -22,46 +21,62 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Set up RTDB listeners for every node discovered via Convex
+  // 1. Discover Nodes
   useEffect(() => {
-    if (!nodes) return;
+    const registryRef = ref(rtdb, 'registry/nodes');
+    return onValue(registryRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setNodeIds(snapshot.val());
+      }
+    });
+  }, []);
+
+  // 2. Set up RTDB listeners for metadata and latest telemetry
+  useEffect(() => {
+    if (nodeIds.length === 0) return;
 
     const unsubs: (() => void)[] = [];
-    nodes.forEach(node => {
-      const nodeRef = ref(rtdb, `nodes/${node.node_id}/latest`);
-      const unsub = onValue(nodeRef, (snapshot) => {
+    
+    nodeIds.forEach(id => {
+      // Metadata listener
+      const metaRef = ref(rtdb, `nodes/${id}/metadata`);
+      const unsubMeta = onValue(metaRef, (snapshot) => {
         if (snapshot.exists()) {
-          setLatestData(prev => ({
-            ...prev,
-            [node.node_id]: snapshot.val() as RawSensorData
-          }));
+          setNodesMetadata(prev => ({ ...prev, [id]: snapshot.val() }));
         }
       });
-      unsubs.push(unsub);
+      unsubs.push(unsubMeta);
+
+      // Latest telemetry listener
+      const latestRef = ref(rtdb, `nodes/${id}/latest`);
+      const unsubLatest = onValue(latestRef, (snapshot) => {
+        if (snapshot.exists()) {
+          setLatestData(prev => ({ ...prev, [id]: snapshot.val() }));
+        }
+      });
+      unsubs.push(unsubLatest);
     });
 
     return () => unsubs.forEach(u => u());
-  }, [nodes]);
+  }, [nodeIds]);
 
   // Global Health Logic
   const systemStatus = useMemo(() => {
-    if (!nodes) return 'loading';
+    if (nodeIds.length === 0) return 'loading';
     if (Object.keys(latestData).length === 0) return 'degraded';
     
-    // Critical: No node heartbeats in last 1 minute
     const mostRecentUpdate = Math.max(...Object.values(latestData).map(d => new Date(d.ts).getTime()));
     if (Date.now() - mostRecentUpdate > 60000) return 'critical';
 
-    // Degraded: any individual node is offline (> 10 mins)
-    const hasOfflineNode = nodes.some(n => {
-      const data = latestData[n.node_id];
+    const hasOfflineNode = nodeIds.some(id => {
+      const data = latestData[id];
       if (!data) return true;
       const age = Date.now() - new Date(data.ts).getTime();
       return age > 10 * 60000;
     });
 
     return hasOfflineNode ? 'degraded' : 'operational';
-  }, [nodes, latestData, now]);
+  }, [nodeIds, latestData, now]);
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans selection:bg-emerald-500/30">
@@ -83,31 +98,35 @@ export default function App() {
       </header>
 
       <main className="p-8 max-w-6xl mx-auto">
-        {!nodes ? (
+        {nodeIds.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 gap-4 text-slate-500">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500"></div>
             <p>Fetching Fleet Registry...</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-8">
-            {nodes.map(node => {
-              const data = latestData[node.node_id];
+            {nodeIds.map(id => {
+              const meta = nodesMetadata[id];
+              const data = latestData[id];
+              
+              if (!meta) return null;
+
               const ageMinutes = data ? (Date.now() - new Date(data.ts).getTime()) / 60000 : Infinity;
               const isOffline = ageMinutes > 10;
-              const isCharging = data && data.solar_i > 50; // Simple threshold for active solar charging
+              const isCharging = data && data.solar_i > 50;
 
               return (
-                <Card key={node.node_id} className={`bg-slate-800 border-slate-700 transition-all duration-500 ${isOffline ? 'opacity-75 grayscale' : 'hover:border-slate-600 shadow-lg'}`}>
+                <Card key={id} className={`bg-slate-800 border-slate-700 transition-all duration-500 ${isOffline ? 'opacity-75 grayscale' : 'hover:border-slate-600 shadow-lg'}`}>
                   {/* Node Header */}
                   <div className="p-6 flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-700 bg-slate-800/50">
                     <div>
                       <div className="flex items-center gap-3 mb-1">
                         <div className={`h-2.5 w-2.5 rounded-full ${isOffline ? 'bg-rose-500 animate-pulse' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]'}`}></div>
                         <h2 className="text-lg font-bold flex items-center gap-2">
-                           {node.name}
+                           {meta.name}
                         </h2>
                       </div>
-                      <p className="text-xs font-mono text-slate-500">UID: {node.node_id.toUpperCase()} • {node.location.description}</p>
+                      <p className="text-xs font-mono text-slate-500">UID: {id.toUpperCase()} • {meta.location.description}</p>
                     </div>
                     <div className="text-right mt-4 md:mt-0 flex flex-col items-end">
                       <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mb-1">Connection State</p>
@@ -167,7 +186,7 @@ export default function App() {
                   {/* Calibration & Logic Footer */}
                   <div className="px-6 py-3 bg-slate-900/30 border-t border-slate-700/50 flex justify-between items-center">
                     <span className="text-[10px] text-slate-500 uppercase tracking-tighter">
-                      Calibration: {node.calibration.temp_scalar.toFixed(2)}x / {node.calibration.temp_offset} offset
+                      Calibration: {meta.calibration.temp_scalar.toFixed(2)}x / {meta.calibration.temp_offset} offset
                     </span>
                     <div className="flex gap-2">
                        {data?.batt_v < 3500 && <Badge variant="warning">Low Battery</Badge>}
@@ -181,7 +200,6 @@ export default function App() {
         )}
       </main>
       
-      {/* Footer Info */}
       <footer className="mt-20 border-t border-slate-800 p-8 text-center text-slate-600 text-sm">
         <p>© {new Date().getFullYear()} Panahon.live Ecosystem • Automated Status Monitoring</p>
       </footer>

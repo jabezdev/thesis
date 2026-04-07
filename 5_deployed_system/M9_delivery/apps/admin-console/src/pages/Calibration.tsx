@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { api } from "../../../../convex/_generated/api";
 import { Card, Button, Badge } from "@panahon/ui";
 import { Sliders, Save, RefreshCcw, Info } from "lucide-react";
 import { useState, useEffect } from "react";

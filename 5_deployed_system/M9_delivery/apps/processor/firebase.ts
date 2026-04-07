@@ -14,13 +14,14 @@ if (fs.existsSync(envPath)) {
   dotenv.config();
 } else {
   console.warn('[Firebase] .env file NOT found in CWD.');
-  // Try loading from apps/processor/.env as a fallback
-  const fallbackPath = path.resolve(process.cwd(), 'apps/processor/.env');
-  console.log(`[Firebase] Checking fallback at: ${fallbackPath}`);
-  if (fs.existsSync(fallbackPath)) {
-    console.log('[Firebase] Found fallback .env.');
-    dotenv.config({ path: fallbackPath });
-  }
+}
+
+// Always try to load root .env.local which contains shared monorepo keys
+const rootEnvPath = path.resolve(process.cwd(), '../../.env.local');
+console.log(`[Firebase] Checking root .env.local at: ${rootEnvPath}`);
+if (fs.existsSync(rootEnvPath)) {
+  console.log('[Firebase] Found root .env.local.');
+  dotenv.config({ path: rootEnvPath, override: true });
 }
 
 /**

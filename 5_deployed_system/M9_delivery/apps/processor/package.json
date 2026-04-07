@@ -5,8 +5,9 @@
   "main": "index.ts",
   "dependencies": {
     "@panahon/shared": "workspace:*",
-    "firebase-admin": "^11.0.0",
-    "dotenv": "^16.0.0"
+    "convex": "^1.34.1",
+    "dotenv": "^16.0.0",
+    "firebase-admin": "^11.0.0"
   },
   "scripts": {
     "start": "bun index.ts",

@@ -5,14 +5,13 @@ import { ref, onValue } from 'firebase/database'
 import { rtdb } from './firebase'
 import type { RawSensorData } from '@panahon/shared'
 import { ResponsiveContainer, AreaChart, Area, XAxis, Tooltip, YAxis, CartesianGrid } from 'recharts'
-import { useQuery } from 'convex/react'
-import { api } from '../../../convex/_generated/api'
 
 type MetricType = 'temp' | 'hum' | 'rain';
 
 function App() {
   const [latestData, setLatestData] = useState<RawSensorData | null>(null);
   const [lastHourData, setLastHourData] = useState<(RawSensorData & { timeLabel: string })[]>([]);
+  const [nodeMetadata, setNodeMetadata] = useState<any>(null);
   const [activeMetric, setActiveMetric] = useState<MetricType>('rain');
   const [isDarkMode, setIsDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -21,9 +20,6 @@ function App() {
     }
     return false;
   });
-
-  // Convex: Fetch node metadata
-  const nodeMetadata = useQuery(api.nodes.getNodeByNodeId, { node_id: 'node_1' });
 
   useEffect(() => {
     if (isDarkMode) {
@@ -36,11 +32,19 @@ function App() {
   }, [isDarkMode]);
 
   useEffect(() => {
-    // Latest
+    // Latest Telemetry
     const latestRef = ref(rtdb, 'nodes/node_1/latest');
     const unsubLatest = onValue(latestRef, (snapshot) => {
       if (snapshot.exists()) {
         setLatestData(snapshot.val());
+      }
+    });
+
+    // Metadata (Synced from Convex by Processor)
+    const metaRef = ref(rtdb, 'nodes/node_1/metadata');
+    const unsubMeta = onValue(metaRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setNodeMetadata(snapshot.val());
       }
     });
 
@@ -65,6 +69,7 @@ function App() {
 
     return () => {
       unsubLatest();
+      unsubMeta();
       unsubHour();
     };
   }, []);

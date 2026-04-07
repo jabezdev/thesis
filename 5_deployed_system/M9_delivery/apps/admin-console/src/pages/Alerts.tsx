@@ -1,11 +1,12 @@
 import { useQuery, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { api } from "../../../../convex/_generated/api";
 import { Card, Button, Badge } from "@panahon/ui";
 import { ShieldAlert, CheckCircle2, History, AlertCircle, Clock, Trash2 } from "lucide-react";
 
 export default function Alerts() {
   const alerts = useQuery(api.alerts.list);
   const resolveAlert = useMutation(api.alerts.resolve);
+  const deleteAlert = useMutation(api.alerts.deleteAlert);
 
   const unresolved = alerts?.filter(a => !a.resolved) || [];
   const resolved = alerts?.filter(a => a.resolved) || [];
@@ -76,7 +77,7 @@ export default function Alerts() {
                         <p className="text-xs text-slate-400">Triggered: {new Date(alert.triggered_at).toLocaleTimeString()} | Resolved: {new Date(alert.resolved_at!).toLocaleTimeString()} </p>
                      </div>
                   </div>
-                  <Button variant="secondary" className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10"><Trash2 size={16} /></Button>
+                  <Button variant="secondary" onClick={() => deleteAlert({ alertId: alert._id })} className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/10"><Trash2 size={16} /></Button>
                </div>
             ))}
             {resolved.length === 0 && (

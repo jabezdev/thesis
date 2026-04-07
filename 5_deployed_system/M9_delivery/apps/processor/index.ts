@@ -1,5 +1,7 @@
 import { db, rtdb, getLastProcessedCursor, setLastProcessedCursor } from './firebase';
 import { RawSensorData } from '@panahon/shared';
+import { ConvexHttpClient } from "convex/browser";
+import { api } from "../../convex/_generated/api";
 
 /**
  * @panahonProcessor - Core Service
@@ -7,6 +9,31 @@ import { RawSensorData } from '@panahon/shared';
 
 const RAW_COLLECTION = 'node_data_0v3';
 const NORMALIZED_COLLECTION = 'm6_node_data';
+
+// Initialize Convex Client
+const convex = new ConvexHttpClient(process.env.VITE_CONVEX_URL!);
+
+export async function syncConvexMetadata() {
+  console.log('[Sync] Fetching node metadata from Convex...');
+  try {
+    const nodes = await convex.query(api.nodes.list);
+    const registry: string[] = [];
+    for (const node of nodes) {
+      registry.push(node.node_id);
+      await rtdb.ref(`nodes/${node.node_id}/metadata`).set({
+        name: node.name,
+        location: node.location,
+        calibration: node.calibration,
+        status: node.status,
+        last_sync: new Date().toISOString()
+      });
+    }
+    await rtdb.ref('registry/nodes').set(registry);
+    console.log(`[Sync] Successfully synchronized ${nodes.length} nodes and registry to RTDB.`);
+  } catch (err) {
+    console.error('[Sync] Error syncing metadata:', err);
+  }
+}
 
 async function processBatch(docId: string, data: any) {
   const nodeId = data.node_id;
@@ -47,6 +74,41 @@ async function processBatch(docId: string, data: any) {
 
 async function startProcessor() {
   console.log('--- Panahon Live Telemetry Processor Starting ---');
+
+  // ── HTTP /sync endpoint ─────────────────────────────────────────────
+  const SYNC_PORT = parseInt(process.env.SYNC_PORT || '3001');
+  const SYNC_SECRET = process.env.PROCESSOR_SYNC_SECRET || '';
+
+  // Use Bun's native HTTP server (types come from @types/bun or bun itself)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).Bun?.serve({
+    port: SYNC_PORT,
+    async fetch(req: Request) {
+      const url = new URL(req.url);
+      if (req.method === 'POST' && url.pathname === '/sync') {
+        if (SYNC_SECRET && req.headers.get('x-sync-secret') !== SYNC_SECRET) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        console.log('[HTTP /sync] Immediate sync triggered.');
+        syncConvexMetadata().catch(console.error);
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (req.method === 'GET' && url.pathname === '/health') {
+        return new Response(JSON.stringify({ status: 'ok' }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response('Not Found', { status: 404 });
+    },
+  });
+  console.log(`[HTTP] Sync endpoint listening on port ${SYNC_PORT}`);
+
+  // Initial Sync
+  await syncConvexMetadata();
+  // Periodic Sync every 5 minutes
+  setInterval(syncConvexMetadata, 5 * 60 * 1000);
 
   try {
     console.log('[Processor] Calling getLastProcessedCursor()...');
@@ -134,12 +196,10 @@ async function startProcessor() {
     }
   });
 
-  // 3. Periodic UI Cleanup (Optional, but keeps RTDB lean for public site)
+  // 3. Periodic UI Cleanup
   setInterval(async () => {
     const oneHourAgo = Date.now() - (60 * 60 * 1000);
-    // Cleanup nodes/{id}/last_hour/<epoch> if epoch < oneHourAgo
-    // Note: In production, use Firebase Functions or a more efficient sweep.
-  }, 15 * 60 * 1000); // Check every 15 mins
+  }, 15 * 60 * 1000); 
 }
 
 startProcessor().catch(console.error);

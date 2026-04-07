@@ -11,6 +11,7 @@
 import type * as alerts from "../alerts.js";
 import type * as nodes from "../nodes.js";
 import type * as seed from "../seed.js";
+import type * as sync from "../sync.js";
 import type * as users from "../users.js";
 
 import type {
@@ -23,6 +24,7 @@ declare const fullApi: ApiFromModules<{
   alerts: typeof alerts;
   nodes: typeof nodes;
   seed: typeof seed;
+  sync: typeof sync;
   users: typeof users;
 }>;
 

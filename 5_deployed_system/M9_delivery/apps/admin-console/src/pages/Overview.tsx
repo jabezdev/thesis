@@ -1,5 +1,5 @@
 import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { api } from "../../../../convex/_generated/api";
 import { Card, Stats } from "@panahon/ui";
 import { Activity, Radio, ShieldAlert, Cpu } from "lucide-react";
 
