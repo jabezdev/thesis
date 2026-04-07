@@ -1,0 +1,19 @@
+{
+  "name": "panahon-live",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:processor": "bun --cwd apps/processor dev",
+    "dev:public": "bun --cwd apps/public-site dev",
+    "dev:dashboard": "bun --cwd apps/lgu-dashboard dev",
+    "dev:admin": "bun --cwd apps/admin-console dev",
+    "dev:status": "bun --cwd apps/status-page dev"
+  },
+  "dependencies": {
+    "convex": "^1.34.1"
+  }
+}
