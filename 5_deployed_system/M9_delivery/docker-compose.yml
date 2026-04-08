@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: apps/processor/Dockerfile
     ports:
-      - "3001:3001"
+      - "9095:3001"
     restart: always
     env_file:
       - apps/processor/.env
