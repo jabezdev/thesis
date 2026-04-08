@@ -1,0 +1,42 @@
+services:
+  processor:
+    build:
+      context: .
+      dockerfile: apps/processor/Dockerfile
+    ports:
+      - "3001:3001"
+    restart: always
+    env_file:
+      - apps/processor/.env
+
+  public-site:
+    build:
+      context: .
+      dockerfile: apps/public-site/Dockerfile
+    ports:
+      - "9091:80"
+    restart: always
+
+  lgu-dashboard:
+    build:
+      context: .
+      dockerfile: apps/lgu-dashboard/Dockerfile
+    ports:
+      - "9092:80"
+    restart: always
+
+  admin-console:
+    build:
+      context: .
+      dockerfile: apps/admin-console/Dockerfile
+    ports:
+      - "9093:80"
+    restart: always
+
+  status-page:
+    build:
+      context: .
+      dockerfile: apps/status-page/Dockerfile
+    ports:
+      - "9094:80"
+    restart: always
