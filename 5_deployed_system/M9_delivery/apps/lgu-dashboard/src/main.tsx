@@ -7,7 +7,8 @@ import App from './App.tsx'
 import { DashboardGuard } from './DashboardGuard.tsx'
 import './index.css'
 
-const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
+const convexUrl = (import.meta.env.VITE_CONVEX_URL as string).replace(/\/$/, "");
+const convex = new ConvexReactClient(convexUrl);
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 if (!PUBLISHABLE_KEY) {

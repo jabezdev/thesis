@@ -11,7 +11,8 @@ const RAW_COLLECTIONS = ['node_data_0v3'];
 const NORMALIZED_COLLECTION = 'm6_node_data';
 
 // Initialize Convex Client
-const convex = new ConvexHttpClient(process.env.VITE_CONVEX_URL!);
+const convexUrl = (process.env.VITE_CONVEX_URL!).replace(/\/$/, "");
+const convex = new ConvexHttpClient(convexUrl);
 
 // Tracks the last processed sample time per node in memory to calculate gaps
 const lastNodeSampleMap: Record<string, number> = {};
