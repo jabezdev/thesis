@@ -15,6 +15,7 @@ RUN bun install
 
 # Copy source code
 COPY packages/ packages/
+COPY convex/ convex/
 COPY apps/admin-console apps/admin-console
 
 # Build the app

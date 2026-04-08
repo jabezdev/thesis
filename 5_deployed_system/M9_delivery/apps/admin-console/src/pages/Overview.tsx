@@ -7,8 +7,8 @@ export default function Overview() {
   const nodes = useQuery(api.nodes.list);
   const alerts = useQuery(api.alerts.list);
 
-  const activeNodes = nodes?.filter(n => n.status === "active").length || 0;
-  const criticalAlerts = alerts?.filter(a => !a.resolved && a.severity === "critical").length || 0;
+  const activeNodes = nodes?.filter((n: any) => n.status === "active").length || 0;
+  const criticalAlerts = alerts?.filter((a: any) => !a.resolved && a.severity === "critical").length || 0;
 
   return (
     <div className="flex flex-col gap-8">
@@ -58,9 +58,9 @@ export default function Overview() {
                <ShieldAlert size={18} className="text-rose-500" />
                Recent Incidents
             </h3>
-            {alerts?.filter(a => !a.resolved).slice(0, 3).length ? (
+            {alerts?.filter((a: any) => !a.resolved).slice(0, 3).length ? (
                <div className="flex flex-col gap-3">
-                 {alerts.filter(a => !a.resolved).slice(0, 3).map(alert => (
+                 {alerts.filter((a: any) => !a.resolved).slice(0, 3).map((alert: any) => (
                     <div key={alert._id} className="p-3 border border-slate-100 dark:border-slate-800 rounded-lg flex justify-between items-center text-sm bg-slate-50/50 dark:bg-slate-900/50">
                        <div>
                           <p className="font-bold">{alert.message}</p>

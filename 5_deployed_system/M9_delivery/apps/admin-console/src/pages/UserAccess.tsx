@@ -15,7 +15,7 @@ export default function UserAccess() {
   const [search, setSearch] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState<any>(null);
 
-  const filtered = users?.filter(u =>
+  const filtered = users?.filter((u: any) =>
     u.name.toLowerCase().includes(search.toLowerCase()) ||
     u.email.toLowerCase().includes(search.toLowerCase())
   );
@@ -49,7 +49,7 @@ export default function UserAccess() {
       </header>
 
       <Card className="divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
-        {filtered?.map(user => (
+        {filtered?.map((user: any) => (
           <div key={user._id} className="p-6 flex flex-col md:flex-row justify-between items-center group hover:bg-slate-50 dark:hover:bg-slate-800/10 transition-all">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-700 rounded-full flex items-center justify-center text-white font-bold text-lg shadow">

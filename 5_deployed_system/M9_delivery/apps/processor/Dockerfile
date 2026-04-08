@@ -15,6 +15,7 @@ RUN bun install
 
 # Copy source code
 COPY packages/ packages/
+COPY convex/ convex/
 COPY apps/processor apps/processor
 
 # Set working directory to processor for execution

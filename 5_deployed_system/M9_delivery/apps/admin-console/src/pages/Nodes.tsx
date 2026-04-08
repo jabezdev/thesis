@@ -130,7 +130,7 @@ export default function Nodes() {
       </header>
 
       <div className="grid grid-cols-1 gap-4">
-        {nodes?.map((node) => (
+        {nodes?.map((node: any) => (
           <Card key={node._id} className="p-6 flex flex-col md:flex-row justify-between items-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl hover:shadow-xl hover:shadow-slate-200/50 dark:hover:shadow-none transition-all group overflow-hidden relative">
             <div className="absolute top-0 left-0 w-1 h-full bg-blue-600 opacity-0 group-hover:opacity-100 transition-all" />
             <div className="flex items-center gap-6">
