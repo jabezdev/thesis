@@ -19,6 +19,12 @@ COPY convex/ convex/
 COPY apps/lgu-dashboard apps/lgu-dashboard
 
 # Build the app
+ARG VITE_CONVEX_URL
+ARG VITE_CLERK_PUBLISHABLE_KEY
+
+ENV VITE_CONVEX_URL=$VITE_CONVEX_URL
+ENV VITE_CLERK_PUBLISHABLE_KEY=$VITE_CLERK_PUBLISHABLE_KEY
+
 RUN bun run --cwd apps/lgu-dashboard build
 
 # Production Image
