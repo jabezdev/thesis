@@ -48,7 +48,8 @@ export const create = mutation({
       v.literal("heavy_rain"),
       v.literal("high_temp"),
       v.literal("battery_critical"),
-      v.literal("offline")
+      v.literal("offline"),
+      v.literal("manual")
     ),
     message: v.string(),
     severity: v.union(v.literal("info"), v.literal("warning"), v.literal("critical")),

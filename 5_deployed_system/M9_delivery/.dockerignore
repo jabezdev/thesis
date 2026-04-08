@@ -1,0 +1,16 @@
+node_modules
+dist
+build
+.next
+.turbo
+.cache
+*.log
+*.env
+*.env.local
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+bun.log
+npm.log
+yarn-error.log

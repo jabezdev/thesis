@@ -25,6 +25,10 @@ export default defineSchema({
       batt_v_offset: v.number(),
       solar_v_offset: v.number(),
     }),
+    alert_thresholds: v.optional(v.object({
+      high_temp: v.number(),
+      heavy_rain: v.number(),
+    })),
     installed_at: v.number(),
     last_maintained_at: v.number(),
   }).index("by_node_id", ["node_id"]),
@@ -39,7 +43,7 @@ export default defineSchema({
 
   alerts: defineTable({
     node_id: v.string(),
-    type: v.union(v.literal("heavy_rain"), v.literal("high_temp"), v.literal("battery_critical"), v.literal("offline")),
+    type: v.union(v.literal("heavy_rain"), v.literal("high_temp"), v.literal("battery_critical"), v.literal("offline"), v.literal("manual")),
     message: v.string(),
     severity: v.union(v.literal("info"), v.literal("warning"), v.literal("critical")),
     triggered_at: v.number(),

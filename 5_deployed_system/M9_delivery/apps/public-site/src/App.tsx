@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { ref, onValue } from 'firebase/database'
 import { rtdb } from './firebase'
-import type { RawSensorData } from '@panahon/shared'
+import { applyCalibration, DEFAULT_CALIBRATION, type RawSensorData, type ProcessedData } from '@panahon/shared'
 import { CloudRain, Droplets, Thermometer, MapPin, Wifi, WifiOff, Moon, Sun, Flame, Cloud, Info } from 'lucide-react'
 
 // ── Heat Index ────────────────────────────────────────────────────────────────
@@ -40,6 +40,8 @@ function App() {
   const [meta, setMeta] = useState<any>(null)
   const [showHiInfo, setShowHiInfo] = useState(false)
 
+  const processedData = data ? applyCalibration(data, meta?.calibration ?? DEFAULT_CALIBRATION) : null;
+
   // ── Dark mode: follow system, override on toggle ───────────────────────────
   const [isDark, setIsDark] = useState(() => {
     const stored = localStorage.getItem('panahon-public-theme')
@@ -72,13 +74,13 @@ function App() {
     return () => { u1(); u2() }
   }, [])
 
-  const hi = data ? heatIndex(data.temp, data.hum) : null
-  const cond = data
-    ? getCondition(data.rain, data.temp)
+  const hi = processedData ? heatIndex(processedData.temp_corrected, processedData.hum_corrected) : null
+  const cond = processedData
+    ? getCondition(processedData.rain_corrected, processedData.temp_corrected)
     : { label: 'Loading…', lightBg: 'from-sky-600 to-blue-700', darkBg: 'dark:from-sky-900 dark:to-blue-950', Icon: Sun }
   const hiInfo = hi ? hiLevel(hi) : null
-  const updatedAt = data
-    ? new Date(data.ts).toLocaleString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  const updatedAt = processedData
+    ? new Date(processedData.ts).toLocaleString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     : null
 
   return (
@@ -119,7 +121,7 @@ function App() {
         <p className="text-sm font-bold uppercase tracking-widest text-white/80 mb-1">{cond.label}</p>
 
         <div className="flex items-start justify-center">
-          <span className="text-[6.5rem] sm:text-[8rem] font-black leading-none tracking-tighter text-white drop-shadow-xl">{fmt(data?.temp)}</span>
+          <span className="text-[6.5rem] sm:text-[8rem] font-black leading-none tracking-tighter text-white drop-shadow-xl">{fmt(processedData?.temp_corrected)}</span>
           <span className="text-3xl text-white/70 font-light mt-6 sm:mt-8">°C</span>
         </div>
 
@@ -162,7 +164,7 @@ function App() {
               <div className="p-2 bg-white/20 rounded-xl border border-white/15">
                 <Thermometer size={20} className="text-white" />
               </div>
-              <span className="text-2xl font-black text-white">{fmt(data?.temp)}<span className="text-sm text-white/70">°C</span></span>
+              <span className="text-2xl font-black text-white">{fmt(processedData?.temp_corrected)}<span className="text-sm text-white/70">°C</span></span>
               <span className="text-[10px] uppercase tracking-widest text-white/75 font-bold">Air Temp</span>
             </div>
             {/* Humidity */}
@@ -170,7 +172,7 @@ function App() {
               <div className="p-2 bg-white/20 rounded-xl border border-white/15">
                 <Droplets size={20} className="text-white" />
               </div>
-              <span className="text-2xl font-black text-white">{fmt(data?.hum)}<span className="text-sm text-white/70">%</span></span>
+              <span className="text-2xl font-black text-white">{fmt(processedData?.hum_corrected)}<span className="text-sm text-white/70">%</span></span>
               <span className="text-[10px] uppercase tracking-widest text-white/75 font-bold">Humidity</span>
             </div>
             {/* Rainfall */}
@@ -178,7 +180,7 @@ function App() {
               <div className="p-2 bg-white/20 rounded-xl border border-white/15">
                 <CloudRain size={20} className="text-white" />
               </div>
-              <span className="text-2xl font-black text-white">{fmt(data?.rain)}<span className="text-sm text-white/70">mm</span></span>
+              <span className="text-2xl font-black text-white">{fmt(processedData?.rain_corrected)}<span className="text-sm text-white/70">mm</span></span>
               <span className="text-[10px] uppercase tracking-widest text-white/75 font-bold">Rainfall</span>
             </div>
           </div>

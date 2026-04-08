@@ -7,7 +7,7 @@ import { api } from "../../convex/_generated/api";
  * @panahonProcessor - Core Service
  */
 
-const RAW_COLLECTIONS = ['ota_initial_data_v2', 'node_pending_0v3', 'node_data_0v3'];
+const RAW_COLLECTIONS = ['node_data_0v3'];
 const NORMALIZED_COLLECTION = 'm6_node_data';
 
 // Initialize Convex Client
@@ -15,6 +15,7 @@ const convex = new ConvexHttpClient(process.env.VITE_CONVEX_URL!);
 
 // Tracks the last processed sample time per node in memory to calculate gaps
 const lastNodeSampleMap: Record<string, number> = {};
+const nodeMetaCache = new Map<string, any>();
 
 export async function syncConvexMetadata() {
   console.log('[Sync] Fetching node metadata from Convex...');
@@ -23,11 +24,14 @@ export async function syncConvexMetadata() {
     const registry: string[] = [];
     for (const node of nodes) {
       registry.push(node.node_id);
+      const thresholds = node.alert_thresholds ?? { high_temp: 40, heavy_rain: 5 };
+      nodeMetaCache.set(node.node_id, { calibration: node.calibration, alert_thresholds: thresholds });
       await rtdb.ref(`nodes/${node.node_id}/metadata`).set({
         name: node.name,
         location: node.location,
         calibration: node.calibration,
         status: node.status,
+        alert_thresholds: thresholds,
         last_sync: new Date().toISOString()
       });
     }
@@ -70,10 +74,10 @@ async function processBatch(docId: string, data: any) {
   // Recover state if node timeline is unknown (e.g. processor reboot limit)
   if (!lastNodeSampleMap[nodeId]) {
     const dbLast = await db.collection(NORMALIZED_COLLECTION)
-                           .where('node_id', '==', nodeId)
-                           .orderBy('ts', 'desc')
-                           .limit(1)
-                           .get();
+      .where('node_id', '==', nodeId)
+      .orderBy('ts', 'desc')
+      .limit(1)
+      .get();
     if (!dbLast.empty) {
       lastNodeSampleMap[nodeId] = new Date(dbLast.docs[0].data().ts).getTime();
     }
@@ -87,17 +91,17 @@ async function processBatch(docId: string, data: any) {
       const delta = currentEpoch - lastNodeSampleMap[nodeId];
       // Number of missing minutes to insert (minus 1 to bracket it against the current valid sample)
       let missingCount = Math.floor(delta / 60000) - 1;
-      
+
       // Absolute sanity cap to prevent memory exhaustion if timestamp gets corrupted (e.g. year 2099 glitch)
       // Caps placeholder insertion to ~3 days maximum per single batch jump.
-      if (missingCount > 4320) missingCount = 4320; 
+      if (missingCount > 4320) missingCount = 4320;
 
       for (let i = 1; i <= missingCount; i++) {
         const gapEpoch = lastNodeSampleMap[nodeId] + (i * 60000);
         // Align gap timestamp purely to minute-level boundary visually
         const gapDate = new Date(gapEpoch);
-        gapDate.setSeconds(0, 0); 
-        
+        gapDate.setSeconds(0, 0);
+
         const gapIsoString = gapDate.toISOString();
         const placeholder = {
           node_id: nodeId,
@@ -132,7 +136,7 @@ async function processBatch(docId: string, data: any) {
 
     // Update Realtime DB (Last Hour list) normally
     rtdb.ref(`nodes/${nodeId}/last_hour/${currentEpoch}`).set(sample);
-    
+
     // Slide timeline forward only if it is chronologically newer
     if (!lastNodeSampleMap[nodeId] || currentEpoch > lastNodeSampleMap[nodeId]) {
       lastNodeSampleMap[nodeId] = currentEpoch;
@@ -148,7 +152,7 @@ async function processBatch(docId: string, data: any) {
   if (opCount > 0) {
     await batch.commit();
   }
-  
+
   console.log(`[Processor] Processed ${history.length} raw samples from doc: ${docId}`);
 }
 
@@ -223,7 +227,7 @@ async function startProcessor() {
           for (const doc of snapshot.docs) {
             await processBatch(doc.id, doc.data());
             const rawTimestamp = doc.data().timestamp;
-            
+
             let docTs = 0;
             if (rawTimestamp && typeof rawTimestamp.toDate === 'function') {
               docTs = rawTimestamp.toDate().getTime();
@@ -231,7 +235,7 @@ async function startProcessor() {
               let isoish = String(rawTimestamp).replace(' ', 'T');
               docTs = new Date(isoish).getTime();
             }
-            
+
             if (!isNaN(docTs) && docTs > 0) {
               await setLastProcessedCursor(docTs, typeof rawTimestamp === 'string' ? rawTimestamp : null);
             }
@@ -251,7 +255,7 @@ async function startProcessor() {
   // 2. Continuous Listener
   console.log('[Processor] Listening for new telemetry docs across all collections...');
   const { str: finalLastStr } = await getLastProcessedCursor();
-  
+
   for (const collectionName of RAW_COLLECTIONS) {
     let listenerQuery = db.collection(collectionName).orderBy('timestamp', 'asc');
     if (finalLastStr) {
@@ -263,7 +267,7 @@ async function startProcessor() {
         if (change.type === 'added') {
           await processBatch(change.doc.id, change.doc.data());
           const rawTimestamp = change.doc.data().timestamp;
-          
+
           let docTs = 0;
           if (rawTimestamp && typeof rawTimestamp.toDate === 'function') {
             docTs = rawTimestamp.toDate().getTime();
@@ -271,7 +275,7 @@ async function startProcessor() {
             let isoish = String(rawTimestamp).replace(' ', 'T');
             docTs = new Date(isoish).getTime();
           }
-          
+
           if (!isNaN(docTs) && docTs > 0) {
             await setLastProcessedCursor(docTs, typeof rawTimestamp === 'string' ? rawTimestamp : null);
           }
@@ -283,7 +287,7 @@ async function startProcessor() {
   // 3. Periodic UI Cleanup
   setInterval(async () => {
     const oneHourAgo = Date.now() - (60 * 60 * 1000);
-  }, 15 * 60 * 1000); 
+  }, 15 * 60 * 1000);
 }
 
 startProcessor().catch(console.error);

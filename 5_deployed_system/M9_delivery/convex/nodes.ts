@@ -18,6 +18,11 @@ const calibrationFields = v.object({
   solar_v_offset: v.number(),
 });
 
+const alertThresholdsFields = v.object({
+  high_temp: v.number(),
+  heavy_rain: v.number(),
+});
+
 export const list = query({
   handler: async (ctx) => ctx.db.query("nodes").collect(),
 });
@@ -47,6 +52,10 @@ export const create = mutation({
         hum_offset: 0, hum_scalar: 1,
         rain_scalar: 1,
         batt_v_offset: 0, solar_v_offset: 0,
+      },
+      alert_thresholds: {
+        high_temp: 40,
+        heavy_rain: 5,
       },
       installed_at: Date.now(),
       last_maintained_at: Date.now(),
@@ -95,5 +104,16 @@ export const updateCalibration = mutation({
       calibration: args.calibration,
       last_maintained_at: Date.now(),
     });
+    await ctx.scheduler.runAfter(0, internal.sync.triggerRtdbSync, {});
+  },
+});
+
+export const updateAlertThresholds = mutation({
+  args: { nodeId: v.id("nodes"), thresholds: alertThresholdsFields },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.nodeId, {
+      alert_thresholds: args.thresholds,
+    });
+    await ctx.scheduler.runAfter(0, internal.sync.triggerRtdbSync, {});
   },
 });

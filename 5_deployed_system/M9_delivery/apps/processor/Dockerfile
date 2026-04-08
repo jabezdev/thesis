@@ -3,7 +3,7 @@ FROM oven/bun:1 AS builder
 WORKDIR /app
 
 # Copy root configurations
-COPY package.json bun.lockb ./
+COPY package.json bun.lock* ./
 
 # Copy workspace package definitions to cache install
 COPY packages/shared/package.json packages/shared/
@@ -15,7 +15,7 @@ RUN bun install
 
 # Copy source code
 COPY packages/ packages/
-COPY apps/processor/ apps/processor/
+COPY apps/processor apps/processor
 
 # Set working directory to processor for execution
 WORKDIR /app/apps/processor

@@ -3,7 +3,7 @@ FROM oven/bun:1 AS builder
 WORKDIR /app
 
 # Copy root configurations
-COPY package.json bun.lockb ./
+COPY package.json bun.lock* ./
 
 # Copy workspace package definitions to cache install
 COPY packages/shared/package.json packages/shared/
@@ -15,7 +15,7 @@ RUN bun install
 
 # Copy source code
 COPY packages/ packages/
-COPY apps/admin-console/ apps/admin-console/
+COPY apps/admin-console apps/admin-console
 
 # Build the app
 RUN bun run --cwd apps/admin-console build

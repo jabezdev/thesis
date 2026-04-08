@@ -37,7 +37,8 @@ export function Button({
 export function Badge({
   children,
   variant = 'info',
-}: { children: React.ReactNode; variant?: 'success' | 'warning' | 'error' | 'info' }) {
+  className = '',
+}: { children: React.ReactNode; variant?: 'success' | 'warning' | 'error' | 'info'; className?: string }) {
   const colors: Record<string, string> = {
     success: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
     warning: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
@@ -45,7 +46,7 @@ export function Badge({
     info: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
   };
   return (
-    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${colors[variant]}`}>
+    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${colors[variant]} ${className}`}>
       {children}
     </span>
   );
@@ -56,9 +57,10 @@ export function Stats({
   value,
   unit = '',
   trend,
-}: { label: string; value: string | number; unit?: string; trend?: string }) {
+  className = '',
+}: { label: string; value: string | number; unit?: string; trend?: string; className?: string }) {
   return (
-  <div className="p-4">
+  <div className={`p-4 ${className}`}>
     <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{label}</p>
     <div className="flex items-baseline gap-1 mt-1">
       <h3 className="text-2xl font-bold tracking-tight">{value}</h3>

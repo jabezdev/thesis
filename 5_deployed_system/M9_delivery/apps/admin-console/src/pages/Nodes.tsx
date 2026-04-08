@@ -24,7 +24,7 @@ export default function Nodes() {
   const deleteNode = useMutation(api.nodes.deleteNode);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
-  const [editNode, setEditNode] = useState<(typeof nodes)[0] | null>(null);
+  const [editNode, setEditNode] = useState<any | null>(null);
   const [form, setForm] = useState<NodeForm>(emptyForm);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);

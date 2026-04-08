@@ -17,7 +17,7 @@ import {
 import {
   CloudRain, Thermometer, Droplets, Flame,
   Download, AlertTriangle, CheckCircle2, Radio,
-  Activity, Zap,
+  Activity, Zap, X,
 } from 'lucide-react'
 
 // ── Heat Index ────────────────────────────────────────────────────────────────
@@ -140,6 +140,25 @@ function App() {
   // ── RTDB latest ────────────────────────────────────────────────────────────
   const [latestData, setLatestData] = useState<ProcessedData | null>(null)
   const [connStatus, setConnStatus] = useState('Connecting…')
+
+  // ── Broadcast Modal ────────────────────────────────────────────────────────
+  const createAlert = useMutation(api.alerts.create)
+  const [isBroadcastOpen, setIsBroadcastOpen] = useState(false)
+  const [broadcastForm, setBroadcastForm] = useState({
+    type: 'manual' as const,
+    severity: 'info' as 'info' | 'warning' | 'critical',
+    message: '',
+    node_id: 'GLOBAL'
+  })
+
+  const handleBroadcast = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!broadcastForm.message) return
+    await createAlert(broadcastForm)
+    setIsBroadcastOpen(false)
+    setBroadcastForm(prev => ({ ...prev, message: '' }))
+  }
+
   useEffect(() => {
     if (!selectedNodeId) return
     setLatestData(null); setConnStatus('Connecting…')
@@ -280,7 +299,23 @@ function App() {
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold shadow-lg shadow-blue-500/25 text-sm select-none">P</div>
           <div className="hidden sm:block leading-none">
             <p className="text-sm font-bold text-slate-900 dark:text-white">Panahon <span className="text-blue-600">LGU</span></p>
-            <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500">DRRM Command</p>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500">DRRM Internal</p>
+          </div>
+        </div>
+
+        {/* Fleet Awareness Bar (Minimal) */}
+        <div className="hidden lg:flex items-center gap-6 bg-slate-50 dark:bg-slate-800/50 px-4 py-1.5 rounded-full border border-slate-200 dark:border-slate-800">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+            <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+              {nodes?.filter(n => n.status === 'active').length || 0} / {nodes?.length || 0} Stations Online
+            </span>
+          </div>
+          <div className="w-px h-3 bg-slate-200 dark:bg-slate-700" />
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider whitespace-nowrap">
+              {activeAlerts.length} Active Warnings
+            </span>
           </div>
         </div>
 
@@ -408,12 +443,17 @@ function App() {
             </div>
 
             {nodes && nodes.length > 0 && (
-              <div className="border-t border-slate-100 dark:border-slate-800 p-3 shrink-0">
-                <p className="text-[9px] uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1.5 font-bold">Station</p>
-                <select value={selectedNodeId ?? ''} onChange={e => setSelectedNodeId(e.target.value)}
-                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-xs font-medium outline-none text-slate-800 dark:text-slate-100">
-                  {nodes.map(n => <option key={n._id} value={n.node_id}>{n.name || n.node_id}</option>)}
-                </select>
+              <div className="border-t border-slate-100 dark:border-slate-800 p-3 shrink-0 flex flex-col gap-3">
+                <div>
+                  <p className="text-[9px] uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1.5 font-bold">Station Focus</p>
+                  <select value={selectedNodeId ?? ''} onChange={e => setSelectedNodeId(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-xs font-medium outline-none text-slate-800 dark:text-slate-100">
+                    {nodes.map(n => <option key={n._id} value={n.node_id}>{n.name || n.node_id}</option>)}
+                  </select>
+                </div>
+                <Button onClick={() => setIsBroadcastOpen(true)} className="w-full gap-2 bg-rose-600 hover:bg-rose-700 text-white border-transparent text-[11px] h-9 rounded-xl font-bold py-0 shadow-lg shadow-rose-500/20">
+                  <AlertTriangle size={14} /> Broadcast Warning
+                </Button>
               </div>
             )}
           </aside>
@@ -543,8 +583,72 @@ function App() {
           ))}
         </main>
       )}
+      {/* ── Broadcast Warning Modal ─────────────────────────────────────── */}
+      {isBroadcastOpen && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[100] flex items-center justify-center p-6 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            <header className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 bg-rose-100 dark:bg-rose-900/30 rounded-lg flex items-center justify-center text-rose-600">
+                  <AlertTriangle size={18} />
+                </div>
+                <h3 className="font-bold text-slate-900 dark:text-white text-lg">Broadcast Warning</h3>
+              </div>
+              <button onClick={() => setIsBroadcastOpen(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
+                <X size={20} />
+              </button>
+            </header>
+            
+            <form onSubmit={handleBroadcast} className="p-6 flex flex-col gap-5">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Severity</label>
+                <div className="flex bg-slate-50 dark:bg-slate-800 p-1 rounded-xl gap-1">
+                  {(['info', 'warning', 'critical'] as const).map(s => (
+                    <button key={s} type="button" onClick={() => setBroadcastForm(f => ({ ...f, severity: s }))}
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold capitalize transition-all ${
+                        broadcastForm.severity === s 
+                          ? s === 'critical' ? 'bg-rose-600 text-white shadow-lg shadow-rose-500/20' : 
+                            s === 'warning' ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20' : 
+                            'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                          : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'
+                      }`}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Station / Scope</label>
+                <select value={broadcastForm.node_id} onChange={e => setBroadcastForm(f => ({ ...f, node_id: e.target.value }))}
+                  className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 outline-none text-sm font-medium">
+                  <option value="GLOBAL">Network-Wide Broadcast</option>
+                  {nodes?.map(n => <option key={n._id} value={n.node_id}>{n.name || n.node_id}</option>)}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Warning Message</label>
+                <textarea 
+                  required rows={3}
+                  value={broadcastForm.message}
+                  onChange={e => setBroadcastForm(f => ({ ...f, message: e.target.value }))}
+                  placeholder="e.g. Heavy rainfall expected in the next 2 hours. Take precaution."
+                  className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 outline-none text-sm resize-none focus:border-blue-500 transition-all"
+                ></textarea>
+              </div>
+
+              <footer className="flex gap-3 mt-2">
+                <Button type="button" variant="outline" className="flex-1 rounded-2xl h-11" onClick={() => setIsBroadcastOpen(false)}>Cancel</Button>
+                <Button type="submit" className="flex-1 rounded-2xl h-11 bg-slate-900 dark:bg-white dark:text-slate-950">Post Alert</Button>
+              </footer>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
+
 
 export default App
