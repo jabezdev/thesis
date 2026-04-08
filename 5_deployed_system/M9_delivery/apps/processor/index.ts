@@ -7,11 +7,14 @@ import { api } from "../../convex/_generated/api";
  * @panahonProcessor - Core Service
  */
 
-const RAW_COLLECTION = 'node_data_0v3';
+const RAW_COLLECTIONS = ['ota_initial_data_v2', 'node_pending_0v3', 'node_data_0v3'];
 const NORMALIZED_COLLECTION = 'm6_node_data';
 
 // Initialize Convex Client
 const convex = new ConvexHttpClient(process.env.VITE_CONVEX_URL!);
+
+// Tracks the last processed sample time per node in memory to calculate gaps
+const lastNodeSampleMap: Record<string, number> = {};
 
 export async function syncConvexMetadata() {
   console.log('[Sync] Fetching node metadata from Convex...');
@@ -37,39 +40,116 @@ export async function syncConvexMetadata() {
 
 async function processBatch(docId: string, data: any) {
   const nodeId = data.node_id;
-  const history: RawSensorData[] = data.history.map((h: any) => ({
+  const history: any[] = data.history.map((h: any) => ({
     ts: h.ts.stringValue || h.ts,
-    uptime_ms: parseInt(h.uptime_ms.integerValue || h.uptime_ms),
-    temp: parseFloat(h.temp.doubleValue || h.temp),
-    hum: parseFloat(h.hum.doubleValue || h.hum),
-    rain: parseFloat(h.rain.doubleValue || h.rain),
-    batt_v: parseFloat(h.batt_v.doubleValue || h.batt_v),
-    batt_i: parseFloat(h.batt_i.doubleValue || h.batt_i),
-    solar_v: parseFloat(h.solar_v.doubleValue || h.solar_v),
-    solar_i: parseFloat(h.solar_i.doubleValue || h.solar_i),
-    samples: parseInt(h.samples.integerValue || h.samples),
+    uptime_ms: parseInt(h.uptime_ms?.integerValue ?? h.uptime_ms ?? "0"),
+    temp: parseFloat(h.temp?.doubleValue ?? h.temp ?? "0"),
+    hum: parseFloat(h.hum?.doubleValue ?? h.hum ?? "0"),
+    rain: parseFloat(h.rain?.doubleValue ?? h.rain ?? "0"),
+    batt_v: parseFloat(h.batt_v?.doubleValue ?? h.batt_v ?? "0"),
+    batt_i: parseFloat(h.batt_i?.doubleValue ?? h.batt_i ?? "0"),
+    solar_v: parseFloat(h.solar_v?.doubleValue ?? h.solar_v ?? "0"),
+    solar_i: parseFloat(h.solar_i?.doubleValue ?? h.solar_i ?? "0"),
+    samples: parseInt(h.samples?.integerValue ?? h.samples ?? "0"),
   }));
 
-  const batch = db.batch();
+  // Sort chronologically ascending
+  history.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+
+  let batch = db.batch();
+  let opCount = 0;
+
+  const commitBatchIfNeeded = async () => {
+    if (opCount >= 450) {
+      await batch.commit();
+      batch = db.batch();
+      opCount = 0;
+    }
+  };
+
+  // Recover state if node timeline is unknown (e.g. processor reboot limit)
+  if (!lastNodeSampleMap[nodeId]) {
+    const dbLast = await db.collection(NORMALIZED_COLLECTION)
+                           .where('node_id', '==', nodeId)
+                           .orderBy('ts', 'desc')
+                           .limit(1)
+                           .get();
+    if (!dbLast.empty) {
+      lastNodeSampleMap[nodeId] = new Date(dbLast.docs[0].data().ts).getTime();
+    }
+  }
 
   for (const sample of history) {
+    const currentEpoch = new Date(sample.ts).getTime();
+
+    // Check for gaps greater than 90 seconds (1.5 minutes) and fill with placeholders
+    if (lastNodeSampleMap[nodeId] && (currentEpoch - lastNodeSampleMap[nodeId] > 90000)) {
+      const delta = currentEpoch - lastNodeSampleMap[nodeId];
+      // Number of missing minutes to insert (minus 1 to bracket it against the current valid sample)
+      let missingCount = Math.floor(delta / 60000) - 1;
+      
+      // Absolute sanity cap to prevent memory exhaustion if timestamp gets corrupted (e.g. year 2099 glitch)
+      // Caps placeholder insertion to ~3 days maximum per single batch jump.
+      if (missingCount > 4320) missingCount = 4320; 
+
+      for (let i = 1; i <= missingCount; i++) {
+        const gapEpoch = lastNodeSampleMap[nodeId] + (i * 60000);
+        // Align gap timestamp purely to minute-level boundary visually
+        const gapDate = new Date(gapEpoch);
+        gapDate.setSeconds(0, 0); 
+        
+        const gapIsoString = gapDate.toISOString();
+        const placeholder = {
+          node_id: nodeId,
+          ts: gapIsoString,
+          uptime_ms: null,
+          temp: null,
+          hum: null,
+          rain: null,
+          batt_v: null,
+          batt_i: null,
+          solar_v: null,
+          solar_i: null,
+          samples: null,
+          is_placeholder: true,
+          processed_at: new Date().toISOString()
+        };
+
+        const tsKey = placeholder.ts.replace(/[: ]/g, '-');
+        const docRef = db.collection(NORMALIZED_COLLECTION).doc(`${nodeId}_${tsKey}`);
+        batch.set(docRef, placeholder);
+        opCount++;
+        await commitBatchIfNeeded();
+      }
+    }
+
+    // Process the actual legitimate sample
     const tsKey = sample.ts.replace(/[: ]/g, '-');
     const docRef = db.collection(NORMALIZED_COLLECTION).doc(`${nodeId}_${tsKey}`);
     batch.set(docRef, { ...sample, node_id: nodeId, processed_at: new Date().toISOString() });
+    opCount++;
+    await commitBatchIfNeeded();
 
-    // Update Realtime DB (Last Hour list)
-    const epoch = new Date(sample.ts).getTime();
-    rtdb.ref(`nodes/${nodeId}/last_hour/${epoch}`).set(sample);
+    // Update Realtime DB (Last Hour list) normally
+    rtdb.ref(`nodes/${nodeId}/last_hour/${currentEpoch}`).set(sample);
+    
+    // Slide timeline forward only if it is chronologically newer
+    if (!lastNodeSampleMap[nodeId] || currentEpoch > lastNodeSampleMap[nodeId]) {
+      lastNodeSampleMap[nodeId] = currentEpoch;
+    }
   }
 
-  // Update Latest (RTDB)
+  // Update Latest (RTDB) using ONLY real valid samples (non-placeholder)
   if (history.length > 0) {
     const last = history[history.length - 1];
     rtdb.ref(`nodes/${nodeId}/latest`).set(last);
   }
 
-  await batch.commit();
-  console.log(`[Processor] Processed ${history.length} samples from doc: ${docId}`);
+  if (opCount > 0) {
+    await batch.commit();
+  }
+  
+  console.log(`[Processor] Processed ${history.length} raw samples from doc: ${docId}`);
 }
 
 async function startProcessor() {
@@ -117,31 +197,72 @@ async function startProcessor() {
     console.log(`[Processor] Resuming from timestamp: ${new Date(resolvedLastTs).toISOString()} (Cursor string: ${lastStr})`);
 
     // 1. Initial Migration (Backfill)
-    console.log(`[Processor] Querying ${RAW_COLLECTION} for backfill...`);
-    let hasMore = true;
-    let lastDocSnap: any = null;
-    let totalProcessed = 0;
+    for (const collectionName of RAW_COLLECTIONS) {
+      console.log(`[Processor] Querying ${collectionName} for backfill...`);
+      let hasMore = true;
+      let lastDocSnap: any = null;
+      let totalProcessed = 0;
 
-    while (hasMore) {
-      let query = db.collection(RAW_COLLECTION)
-        .orderBy('timestamp', 'asc')
-        .limit(100); // Process in chunks to be safe
+      while (hasMore) {
+        let query = db.collection(collectionName)
+          .orderBy('timestamp', 'asc')
+          .limit(100); // Process in chunks to be safe
 
-      if (lastDocSnap) {
-        query = query.startAfter(lastDocSnap);
-      } else if (lastStr) {
-        query = query.where('timestamp', '>', lastStr);
-      } else if (resolvedLastTs > 0) {
-        query = query.where('timestamp', '>', new Date(resolvedLastTs).toISOString());
+        if (lastDocSnap) {
+          query = query.startAfter(lastDocSnap);
+        } else if (lastStr) {
+          query = query.where('timestamp', '>', lastStr);
+        } else if (resolvedLastTs > 0) {
+          query = query.where('timestamp', '>', new Date(resolvedLastTs).toISOString());
+        }
+
+        const snapshot = await query.get();
+
+        if (!snapshot.empty) {
+          console.log(`[Processor] Backfilling chunk of ${snapshot.size} raw documents from ${collectionName}...`);
+          for (const doc of snapshot.docs) {
+            await processBatch(doc.id, doc.data());
+            const rawTimestamp = doc.data().timestamp;
+            
+            let docTs = 0;
+            if (rawTimestamp && typeof rawTimestamp.toDate === 'function') {
+              docTs = rawTimestamp.toDate().getTime();
+            } else if (rawTimestamp) {
+              let isoish = String(rawTimestamp).replace(' ', 'T');
+              docTs = new Date(isoish).getTime();
+            }
+            
+            if (!isNaN(docTs) && docTs > 0) {
+              await setLastProcessedCursor(docTs, typeof rawTimestamp === 'string' ? rawTimestamp : null);
+            }
+          }
+          totalProcessed += snapshot.size;
+          lastDocSnap = snapshot.docs[snapshot.docs.length - 1];
+        } else {
+          hasMore = false;
+          console.log(`[Processor] Backfill complete for ${collectionName}. Processed ${totalProcessed} new docs.`);
+        }
       }
+    }
+  } catch (e) {
+    console.error('[Processor] Critical error in startup sequence:', e);
+  }
 
-      const snapshot = await query.get();
+  // 2. Continuous Listener
+  console.log('[Processor] Listening for new telemetry docs across all collections...');
+  const { str: finalLastStr } = await getLastProcessedCursor();
+  
+  for (const collectionName of RAW_COLLECTIONS) {
+    let listenerQuery = db.collection(collectionName).orderBy('timestamp', 'asc');
+    if (finalLastStr) {
+      listenerQuery = listenerQuery.startAfter(finalLastStr);
+    }
 
-      if (!snapshot.empty) {
-        console.log(`[Processor] Backfilling chunk of ${snapshot.size} raw documents...`);
-        for (const doc of snapshot.docs) {
-          await processBatch(doc.id, doc.data());
-          const rawTimestamp = doc.data().timestamp;
+    listenerQuery.onSnapshot(async (snap) => {
+      for (const change of snap.docChanges()) {
+        if (change.type === 'added') {
+          await processBatch(change.doc.id, change.doc.data());
+          const rawTimestamp = change.doc.data().timestamp;
           
           let docTs = 0;
           if (rawTimestamp && typeof rawTimestamp.toDate === 'function') {
@@ -155,46 +276,9 @@ async function startProcessor() {
             await setLastProcessedCursor(docTs, typeof rawTimestamp === 'string' ? rawTimestamp : null);
           }
         }
-        totalProcessed += snapshot.size;
-        lastDocSnap = snapshot.docs[snapshot.docs.length - 1];
-      } else {
-        hasMore = false;
-        console.log(`[Processor] Backfill complete. Processed ${totalProcessed} new docs.`);
       }
-    }
-  } catch (e) {
-    console.error('[Processor] Critical error in startup sequence:', e);
+    });
   }
-
-  // 2. Continuous Listener
-  console.log('[Processor] Listening for new telemetry docs...');
-  const { str: finalLastStr } = await getLastProcessedCursor();
-  
-  let listenerQuery = db.collection(RAW_COLLECTION).orderBy('timestamp', 'asc');
-  if (finalLastStr) {
-    listenerQuery = listenerQuery.startAfter(finalLastStr);
-  }
-
-  listenerQuery.onSnapshot(async (snap) => {
-    for (const change of snap.docChanges()) {
-      if (change.type === 'added') {
-        await processBatch(change.doc.id, change.doc.data());
-        const rawTimestamp = change.doc.data().timestamp;
-        
-        let docTs = 0;
-        if (rawTimestamp && typeof rawTimestamp.toDate === 'function') {
-          docTs = rawTimestamp.toDate().getTime();
-        } else if (rawTimestamp) {
-          let isoish = String(rawTimestamp).replace(' ', 'T');
-          docTs = new Date(isoish).getTime();
-        }
-        
-        if (!isNaN(docTs) && docTs > 0) {
-          await setLastProcessedCursor(docTs, typeof rawTimestamp === 'string' ? rawTimestamp : null);
-        }
-      }
-    }
-  });
 
   // 3. Periodic UI Cleanup
   setInterval(async () => {

@@ -162,7 +162,7 @@ export default function App() {
                     />
                     <Stats 
                       label="Battery Status"
-                      value={data ? (data.batt_v / 1000).toFixed(2) : '--'}
+                      value={data ? (data.batt_v / 1000).toFixed(1) : '--'}
                       unit="V"
                     />
                     <div className="p-4 flex flex-col justify-center gap-1">
@@ -171,7 +171,7 @@ export default function App() {
                       </p>
                       <div className="flex items-baseline gap-1 mt-1">
                         <h3 className="text-2xl font-bold tracking-tight">
-                          {data ? (data.solar_v / 1000).toFixed(2) : '--'}
+                          {data ? (data.solar_v / 1000).toFixed(1) : '--'}
                         </h3>
                         <span className="text-xs text-slate-400">V</span>
                       </div>
@@ -186,7 +186,7 @@ export default function App() {
                   {/* Calibration & Logic Footer */}
                   <div className="px-6 py-3 bg-slate-900/30 border-t border-slate-700/50 flex justify-between items-center">
                     <span className="text-[10px] text-slate-500 uppercase tracking-tighter">
-                      Calibration: {meta.calibration.temp_scalar.toFixed(2)}x / {meta.calibration.temp_offset} offset
+                      Calibration: {meta.calibration.temp_scalar.toFixed(1)}x / {meta.calibration.temp_offset} offset
                     </span>
                     <div className="flex gap-2">
                        {data?.batt_v < 3500 && <Badge variant="warning">Low Battery</Badge>}

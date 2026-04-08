@@ -1,286 +1,201 @@
 import { useState, useEffect } from 'react'
-import { Card, Stats, Badge, Button } from '@panahon/ui'
-import { CloudRain, Thermometer, Droplets, Moon, Sun, MapPin, Activity, Info } from 'lucide-react'
 import { ref, onValue } from 'firebase/database'
 import { rtdb } from './firebase'
 import type { RawSensorData } from '@panahon/shared'
-import { ResponsiveContainer, AreaChart, Area, XAxis, Tooltip, YAxis, CartesianGrid } from 'recharts'
+import { CloudRain, Droplets, Thermometer, MapPin, Wifi, WifiOff, Moon, Sun, Flame, Cloud, Info } from 'lucide-react'
 
-type MetricType = 'temp' | 'hum' | 'rain';
+// ── Heat Index ────────────────────────────────────────────────────────────────
+function heatIndex(t: number, rh: number): number | null {
+  if (t < 27 || rh < 40) return null
+  return (
+    -8.78469475556 + 1.61139411 * t + 2.33854883889 * rh
+    - 0.14611605 * t * rh - 0.012308094 * t * t
+    - 0.0164248277778 * rh * rh + 0.002211732 * t * t * rh
+    + 0.00072546 * t * rh * rh - 0.000003582 * t * t * rh * rh
+  )
+}
+
+const fmt = (v: number | null | undefined) => (v == null ? '--' : v.toFixed(1))
+
+type Cond = { label: string; lightBg: string; darkBg: string; Icon: typeof Sun }
+function getCondition(rain: number, temp: number): Cond {
+  if (rain > 50) return { label: 'Heavy Rain', lightBg: 'from-blue-700 to-slate-800', darkBg: 'dark:from-blue-950 dark:to-slate-950', Icon: CloudRain }
+  if (rain > 20) return { label: 'Moderate Rain', lightBg: 'from-blue-600 to-slate-700', darkBg: 'dark:from-blue-900 dark:to-slate-900', Icon: CloudRain }
+  if (rain > 2)  return { label: 'Light Rain', lightBg: 'from-sky-600 to-blue-700', darkBg: 'dark:from-sky-900 dark:to-blue-950', Icon: Cloud }
+  if (temp > 35) return { label: 'Hot & Sunny', lightBg: 'from-orange-400 to-amber-600', darkBg: 'dark:from-orange-800 dark:to-amber-950', Icon: Sun }
+  if (temp > 28) return { label: 'Warm & Fair', lightBg: 'from-sky-400 to-blue-500', darkBg: 'dark:from-sky-800 dark:to-blue-900', Icon: Sun }
+  return { label: 'Fair', lightBg: 'from-sky-500 to-blue-600', darkBg: 'dark:from-sky-900 dark:to-blue-950', Icon: Sun }
+}
+
+function hiLevel(hi: number) {
+  if (hi >= 54) return { label: 'Extreme Danger', color: 'text-rose-200' }
+  if (hi >= 41) return { label: 'Danger', color: 'text-orange-200' }
+  if (hi >= 33) return { label: 'Extreme Caution', color: 'text-yellow-200' }
+  if (hi >= 27) return { label: 'Caution', color: 'text-lime-200' }
+  return { label: 'Normal', color: 'text-emerald-200' }
+}
 
 function App() {
-  const [latestData, setLatestData] = useState<RawSensorData | null>(null);
-  const [lastHourData, setLastHourData] = useState<(RawSensorData & { timeLabel: string })[]>([]);
-  const [nodeMetadata, setNodeMetadata] = useState<any>(null);
-  const [activeMetric, setActiveMetric] = useState<MetricType>('rain');
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('theme') === 'dark' || 
-        (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    }
-    return false;
-  });
+  const [data, setData] = useState<RawSensorData | null>(null)
+  const [meta, setMeta] = useState<any>(null)
+  const [showHiInfo, setShowHiInfo] = useState(false)
+
+  // ── Dark mode: follow system, override on toggle ───────────────────────────
+  const [isDark, setIsDark] = useState(() => {
+    const stored = localStorage.getItem('panahon-public-theme')
+    if (stored) return stored === 'dark'
+    return window.matchMedia('(prefers-color-scheme: dark)').matches
+  })
 
   useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const handler = (e: MediaQueryListEvent) => {
+      if (!localStorage.getItem('panahon-public-theme')) setIsDark(e.matches)
     }
-  }, [isDarkMode]);
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+
+  useEffect(() => { document.documentElement.classList.toggle('dark', isDark) }, [isDark])
+
+  const toggleDark = () => {
+    setIsDark(d => {
+      const next = !d
+      localStorage.setItem('panahon-public-theme', next ? 'dark' : 'light')
+      return next
+    })
+  }
 
   useEffect(() => {
-    // Latest Telemetry
-    const latestRef = ref(rtdb, 'nodes/node_1/latest');
-    const unsubLatest = onValue(latestRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setLatestData(snapshot.val());
-      }
-    });
+    const u1 = onValue(ref(rtdb, 'nodes/node_1/latest'), s => { if (s.exists()) setData(s.val()) })
+    const u2 = onValue(ref(rtdb, 'nodes/node_1/metadata'), s => { if (s.exists()) setMeta(s.val()) })
+    return () => { u1(); u2() }
+  }, [])
 
-    // Metadata (Synced from Convex by Processor)
-    const metaRef = ref(rtdb, 'nodes/node_1/metadata');
-    const unsubMeta = onValue(metaRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setNodeMetadata(snapshot.val());
-      }
-    });
-
-    // Last Hour (RTDB Buffer)
-    const hourRef = ref(rtdb, 'nodes/node_1/last_hour');
-    const unsubHour = onValue(hourRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const dataObj = snapshot.val();
-        const sortedData = Object.keys(dataObj)
-          .sort()
-          .map(key => {
-            const d = dataObj[key] as RawSensorData;
-            const t = new Date(d.ts);
-            return {
-              ...d,
-              timeLabel: `${t.getHours().toString().padStart(2, '0')}:${t.getMinutes().toString().padStart(2, '0')}`
-            };
-          });
-        setLastHourData(sortedData);
-      }
-    });
-
-    return () => {
-      unsubLatest();
-      unsubMeta();
-      unsubHour();
-    };
-  }, []);
-
-  const metricConfig = {
-    temp: {
-      label: 'Temperature',
-      unit: '°C',
-      icon: <Thermometer className="text-orange-500" />,
-      color: '#f97316',
-      fill: 'url(#colorTemp)'
-    },
-    hum: {
-      label: 'Humidity',
-      unit: '%',
-      icon: <Droplets className="text-sky-500" />,
-      color: '#0ea5e9',
-      fill: 'url(#colorHum)'
-    },
-    rain: {
-      label: 'Rainfall',
-      unit: 'mm',
-      icon: <CloudRain className="text-blue-500" />,
-      color: '#3b82f6',
-      fill: 'url(#colorRain)'
-    }
-  };
+  const hi = data ? heatIndex(data.temp, data.hum) : null
+  const cond = data
+    ? getCondition(data.rain, data.temp)
+    : { label: 'Loading…', lightBg: 'from-sky-600 to-blue-700', darkBg: 'dark:from-sky-900 dark:to-blue-950', Icon: Sun }
+  const hiInfo = hi ? hiLevel(hi) : null
+  const updatedAt = data
+    ? new Date(data.ts).toLocaleString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : null
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans transition-colors duration-300">
-      {/* Premium Navigation */}
-      <nav className="h-16 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-50 px-4 md:px-8 flex items-center justify-between shadow-sm">
+    <div className={`min-h-screen font-sans bg-gradient-to-br ${cond.lightBg} ${cond.darkBg} text-white transition-all duration-1000 relative overflow-hidden`}>
+      {/* Ambient glow */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_25%_15%,rgba(255,255,255,0.1),transparent_55%)] pointer-events-none" />
+
+      {/* ── Nav ─────────────────────────────────────────────────────────── */}
+      <nav className="relative flex items-center justify-between px-6 py-4">
+        {/* Station name replaces logo */}
+        <h1 className="text-lg font-extrabold tracking-tight text-white truncate max-w-[60%]">
+          {meta?.name || 'Weather Station'}
+        </h1>
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center text-white font-black text-xl shadow-lg shadow-blue-500/20">P</div>
-          <div>
-            <h1 className="text-lg font-bold tracking-tight leading-none">Panahon<span className="text-blue-600">.live</span></h1>
-            <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mt-0.5">Sipat Banwa Network</p>
+          <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border ${data ? 'bg-emerald-500/25 border-emerald-300/50 text-emerald-100' : 'bg-rose-500/25 border-rose-300/50 text-rose-100'}`}>
+            {data ? <Wifi size={11} /> : <WifiOff size={11} />}
+            {data ? 'Live' : 'Offline'}
           </div>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <Badge variant={latestData ? 'success' : 'warning'}>
-            {latestData ? 'Live Data' : 'Offline'}
-          </Badge>
-          <button 
-            onClick={() => setIsDarkMode(!isDarkMode)}
-            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-slate-500 dark:text-slate-400"
-            aria-label="Toggle Dark Mode"
-          >
-            {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+          <button onClick={toggleDark} className="w-9 h-9 rounded-full bg-white/20 hover:bg-white/30 border border-white/25 flex items-center justify-center transition-all" aria-label="Toggle dark mode">
+            {isDark ? <Sun size={15} className="text-yellow-200" /> : <Moon size={15} />}
           </button>
         </div>
       </nav>
 
-      {/* Hero Section */}
-      <header className="py-12 px-6 text-center max-w-4xl mx-auto">
-        <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-full text-xs font-bold mb-4 border border-blue-100 dark:border-blue-800/50">
-          <Activity size={14} className="animate-pulse" />
-          Primary Pilot Station
+      {/* ── Location ─────────────────────────────────────────────────────── */}
+      <div className="relative text-center px-6 pt-1 pb-2">
+        <div className="flex items-center justify-center gap-1.5 text-white/75 text-sm font-medium">
+          <MapPin size={13} className="text-rose-300 shrink-0" />
+          <span>{meta?.location?.description || 'Loading location…'}</span>
         </div>
-        <h2 className="text-4xl md:text-5xl font-black tracking-tighter mb-4 text-slate-900 dark:text-white">
-          {nodeMetadata?.name || 'Monitoring Node 01'}
-        </h2>
-        <p className="text-slate-500 dark:text-slate-400 max-w-xl mx-auto flex items-center justify-center gap-1.5 flex-wrap">
-          <MapPin size={16} className="text-rose-500" />
-          {nodeMetadata?.location?.description || 'Loading location...'}
+      </div>
+
+      {/* ── Weather icon + big temperature ───────────────────────────────── */}
+      <div className="relative flex flex-col items-center pt-3 pb-1 px-6">
+        <div className="mb-3 p-5 bg-white/15 rounded-full border border-white/20 shadow-2xl">
+          <cond.Icon size={72} strokeWidth={1.1} className="text-white drop-shadow-xl" />
+        </div>
+        <p className="text-sm font-bold uppercase tracking-widest text-white/80 mb-1">{cond.label}</p>
+
+        <div className="flex items-start justify-center">
+          <span className="text-[6.5rem] sm:text-[8rem] font-black leading-none tracking-tighter text-white drop-shadow-xl">{fmt(data?.temp)}</span>
+          <span className="text-3xl text-white/70 font-light mt-6 sm:mt-8">°C</span>
+        </div>
+
+        {/* Heat Index row — always shown, with info popover if N/A */}
+        <div className="mt-2 flex flex-col items-center gap-1 relative">
+          {hi ? (
+            <>
+              <div className="flex items-center gap-1.5 text-sm font-medium text-white/90">
+                <Flame size={14} className="text-rose-300" />
+                Heat Index <span className="font-extrabold text-white">{fmt(hi)}°C</span>
+              </div>
+              {hiInfo && <span className={`text-[11px] font-bold uppercase tracking-widest ${hiInfo.color}`}>{hiInfo.label}</span>}
+            </>
+          ) : (
+            <div className="flex items-center gap-1.5 text-sm text-white/75">
+              <Flame size={14} className="text-rose-300/60" />
+              <span>Heat Index</span>
+              <span className="font-bold text-white/60">N/A</span>
+              <button onClick={() => setShowHiInfo(v => !v)} className="ml-0.5 text-white/50 hover:text-white/90 transition-colors" aria-label="Heat index info">
+                <Info size={14} />
+              </button>
+              {showHiInfo && (
+                <div className="absolute top-8 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 border border-white/15 rounded-xl p-3 w-64 shadow-2xl text-left" onClick={e => e.stopPropagation()}>
+                  <p className="text-xs text-white/90 font-semibold mb-1">Heat Index Not Available</p>
+                  <p className="text-[11px] text-white/65 leading-relaxed">Heat index is computed when air temperature ≥ 27°C and relative humidity ≥ 40%. Current conditions are below these thresholds.</p>
+                  <button onClick={() => setShowHiInfo(false)} className="mt-2 text-[10px] text-white/50 hover:text-white/80 font-bold uppercase tracking-widest">Dismiss</button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Conditions card ──────────────────────────────────────────────── */}
+      <div className="relative px-4 max-w-sm mx-auto py-4" onClick={() => setShowHiInfo(false)}>
+        <div className="bg-white/15 backdrop-blur-2xl rounded-3xl border border-white/25 p-6 shadow-2xl">
+          <div className="grid grid-cols-3 gap-3 text-center">
+            {/* Air Temperature */}
+            <div className="flex flex-col items-center gap-2">
+              <div className="p-2 bg-white/20 rounded-xl border border-white/15">
+                <Thermometer size={20} className="text-white" />
+              </div>
+              <span className="text-2xl font-black text-white">{fmt(data?.temp)}<span className="text-sm text-white/70">°C</span></span>
+              <span className="text-[10px] uppercase tracking-widest text-white/75 font-bold">Air Temp</span>
+            </div>
+            {/* Humidity */}
+            <div className="flex flex-col items-center gap-2 border-x border-white/20 px-1">
+              <div className="p-2 bg-white/20 rounded-xl border border-white/15">
+                <Droplets size={20} className="text-white" />
+              </div>
+              <span className="text-2xl font-black text-white">{fmt(data?.hum)}<span className="text-sm text-white/70">%</span></span>
+              <span className="text-[10px] uppercase tracking-widest text-white/75 font-bold">Humidity</span>
+            </div>
+            {/* Rainfall */}
+            <div className="flex flex-col items-center gap-2">
+              <div className="p-2 bg-white/20 rounded-xl border border-white/15">
+                <CloudRain size={20} className="text-white" />
+              </div>
+              <span className="text-2xl font-black text-white">{fmt(data?.rain)}<span className="text-sm text-white/70">mm</span></span>
+              <span className="text-[10px] uppercase tracking-widest text-white/75 font-bold">Rainfall</span>
+            </div>
+          </div>
+          {updatedAt && (
+            <div className="mt-5 pt-4 border-t border-white/20 text-center">
+              <p className="text-[11px] text-white/70 font-medium">Last updated {updatedAt} (PHT)</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Footer ───────────────────────────────────────────────────────── */}
+      <footer className="relative text-center py-8 px-6">
+        <p className="text-[11px] text-white/60 font-medium leading-relaxed">
+          © 2026 Project Sipat Banwa — Observer of the Sky<br />
+          <span className="text-white/50">Electronics Engineering Department - Pampanga State University</span>
         </p>
-      </header>
-
-      <main className="max-w-5xl mx-auto p-4 md:p-8 flex flex-col gap-8">
-        {/* Current Conditions Grid */}
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card className="relative overflow-hidden group hover:ring-2 transition-all ring-orange-500/20">
-            <Stats 
-              label="Temperature" 
-              value={latestData?.temp !== undefined ? latestData.temp : '--'} 
-              unit="°C" 
-              trend={"+0.2"} // Mock trend for now
-            />
-            <div className="absolute right-4 top-4 opacity-10 group-hover:opacity-20 transform scale-150 transition-all group-hover:rotate-12">
-               <Thermometer size={48} className="text-orange-500" />
-            </div>
-          </Card>
-          <Card className="relative overflow-hidden group hover:ring-2 transition-all ring-blue-500/20">
-            <Stats 
-              label="Rainfall" 
-              value={latestData?.rain !== undefined ? latestData.rain : '--'} 
-              unit="mm" 
-              trend={"-1.1"}
-            />
-            <div className="absolute right-4 top-4 opacity-10 group-hover:opacity-20 transform scale-150 transition-all group-hover:-rotate-12">
-               <CloudRain size={48} className="text-blue-500" />
-            </div>
-          </Card>
-          <Card className="relative overflow-hidden group hover:ring-2 transition-all ring-sky-500/20">
-            <Stats 
-              label="Humidity" 
-              value={latestData?.hum !== undefined ? latestData.hum : '--'} 
-              unit="%" 
-            />
-             <div className="absolute right-4 top-4 opacity-10 group-hover:opacity-20 transform scale-150 transition-all group-hover:rotate-12">
-               <Droplets size={48} className="text-sky-500" />
-            </div>
-          </Card>
-        </section>
-
-        {/* Dynamic Chart Section */}
-        <Card className="p-6 md:p-8 bg-white dark:bg-slate-900 shadow-xl border-none">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-            <div>
-              <h3 className="text-xl font-bold flex items-center gap-2">
-                {metricConfig[activeMetric].icon}
-                Historical Trend (1h)
-              </h3>
-              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Real-time RTDB buffer observations.</p>
-            </div>
-            
-            <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-full md:w-auto">
-              {(Object.keys(metricConfig) as MetricType[]).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setActiveMetric(m)}
-                  className={`flex-1 md:px-4 py-2 rounded-lg text-sm font-bold transition-all ${
-                    activeMetric === m 
-                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' 
-                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-                  }`}
-                >
-                  {metricConfig[m].label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="h-72 w-full">
-            {lastHourData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={lastHourData}>
-                  <defs>
-                    <linearGradient id="colorTemp" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f97316" stopOpacity={0.8}/>
-                      <stop offset="95%" stopColor="#f97316" stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="colorHum" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.8}/>
-                      <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="colorRain" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
-                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={isDarkMode ? 0.05 : 0.2} />
-                  <XAxis 
-                    dataKey="timeLabel" 
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{fontSize: 10, fill: isDarkMode ? '#94a3b8' : '#64748b'}} 
-                    minTickGap={10} 
-                  />
-                  <YAxis 
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{fontSize: 10, fill: isDarkMode ? '#94a3b8' : '#64748b'}} 
-                    width={30} 
-                  />
-                  <Tooltip 
-                    contentStyle={{ 
-                      borderRadius: '12px', 
-                      border: 'none', 
-                      backgroundColor: isDarkMode ? '#1e293b' : '#ffffff',
-                      boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
-                      color: isDarkMode ? '#f1f5f9' : '#0f172a'
-                    }} 
-                    itemStyle={{ fontWeight: 'bold' }}
-                  />
-                  <Area 
-                    type="monotone" 
-                    dataKey={activeMetric} 
-                    stroke={metricConfig[activeMetric].color} 
-                    fill={metricConfig[activeMetric].fill} 
-                    strokeWidth={3} 
-                    animationDuration={1000}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-               <div className="h-full w-full bg-slate-50/50 dark:bg-slate-800/10 rounded-xl flex flex-col items-center justify-center border-2 border-dashed border-slate-200 dark:border-slate-800">
-                 <Activity size={32} className="text-slate-300 dark:text-slate-700 animate-pulse mb-3" />
-                 <p className="text-sm text-slate-400 italic">Synchronizing with telemetry stream...</p>
-               </div>
-            )}
-          </div>
-        </Card>
-
-        {/* Info Banner */}
-        <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-800/50 rounded-2xl p-4 flex items-start gap-4">
-           <Info className="text-amber-500 mt-0.5 shrink-0" size={20} />
-           <p className="text-sm text-amber-800 dark:text-amber-300/80">
-             <strong>Research Context:</strong> These values are RAW telemetry data provided “as-is” for the Panahon.live research project. Data is subject to calibration adjustments in post-processing.
-           </p>
-        </div>
-      </main>
-
-      <footer className="text-center p-12 text-slate-400 dark:text-slate-600 text-sm border-t border-slate-200 dark:border-slate-900 mt-12 bg-white dark:bg-slate-900/30">
-          <p>© 2026 Project Sipat Banwa — Disaster Resilience Research Platform</p>
-          <div className="flex justify-center gap-6 mt-4 font-bold text-[10px] uppercase tracking-widest">
-             <a href="#" className="hover:text-blue-600 transition-colors">Documentation</a>
-             <a href="#" className="hover:text-blue-600 transition-colors">API Access</a>
-             <a href="#" className="hover:text-blue-600 transition-colors">LGU Portal</a>
-          </div>
       </footer>
     </div>
   )
