@@ -5,8 +5,13 @@ build
 .turbo
 .cache
 *.log
-*.env
-*.env.local
+# Env files — never bake credentials into the image; inject via runtime env vars
+.env
+.env.local
+.env.*
+**/.env
+**/.env.local
+**/.env.*
 .vscode
 .idea
 .DS_Store

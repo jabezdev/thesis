@@ -11,7 +11,9 @@ const RAW_COLLECTIONS = ['node_data_0v3'];
 const NORMALIZED_COLLECTION = 'm6_node_data';
 
 // Initialize Convex Client
-const convexUrl = (process.env.VITE_CONVEX_URL!).replace(/\/$/, "");
+// VITE_CONVEX_URL is used locally; CONVEX_URL is the plain name set on the VPS
+const convexUrl = (process.env.CONVEX_URL ?? process.env.VITE_CONVEX_URL ?? '').replace(/\/$/, "");
+if (!convexUrl) throw new Error('[Processor] Missing CONVEX_URL env var. Set it in the VPS environment.');
 const convex = new ConvexHttpClient(convexUrl);
 
 // Tracks the last processed sample time per node in memory to calculate gaps
