@@ -211,26 +211,38 @@ export default function App() {
                       </p>
                       <div className="flex items-baseline gap-1.5">
                         <h3 className="text-3xl font-black tracking-tighter text-white">
-                          {processed ? (processed.batt_v_corrected / 1000).toFixed(2) : '--'}
+                          {processed ? processed.batt_v_corrected.toFixed(2) : '--'}
                         </h3>
-                        <span className="text-xs font-bold text-slate-500 italic">VDC</span>
+                        <span className="text-xs font-bold text-slate-500 italic">V</span>
+                      </div>
+                      <div className="flex items-baseline gap-1.5 mt-1">
+                        <span className="text-lg font-bold tracking-tighter text-slate-300">
+                          {data ? data.batt_i.toFixed(1) : '--'}
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-500 italic">mA</span>
                       </div>
                     </div>
 
                     <div className="p-8 flex flex-col gap-2 bg-white/[0.01]">
                       <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-2">
-                        <Sun size={12} className={isCharging ? "text-amber-400" : "text-slate-600"} /> Solar Power
+                        <Sun size={12} className={isCharging ? "text-amber-400" : "text-slate-600"} /> Solar
                       </p>
                       <div className="flex items-baseline gap-1.5">
                         <h3 className="text-3xl font-black tracking-tighter text-white">
-                          {processed ? (processed.solar_v_corrected / 1000).toFixed(2) : '--'}
+                          {processed ? processed.solar_v_corrected.toFixed(2) : '--'}
                         </h3>
                         <span className="text-xs font-bold text-slate-500 italic">V</span>
+                      </div>
+                      <div className="flex items-baseline gap-1.5 mt-1">
+                        <span className="text-lg font-bold tracking-tighter text-slate-300">
+                          {data ? data.solar_i.toFixed(1) : '--'}
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-500 italic">mA</span>
                       </div>
                       {isCharging && (
                         <div className="flex items-center gap-2 text-[10px] font-black text-amber-500 tracking-widest mt-1">
                           <Zap size={10} fill="currentColor" className="animate-pulse" />
-                          CHARGING ({data.solar_i}mA)
+                          CHARGING
                         </div>
                       )}
                     </div>
@@ -259,11 +271,10 @@ export default function App() {
         )}
       </main>
       
-      <footer className="mt-20 border-t border-white/[0.03] p-12 text-center relative z-10">
-        <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-500 mb-4 italic">Panahon.live Fleet Diagnostics</p>
-        <p className="text-slate-600 text-xs tracking-tighter max-w-sm mx-auto leading-relaxed">
-          Real-time telemetry infrastructure for Panahon.live environmental nodes. 
-          Authored by Project Sipat Banwa — Pampanga State Agricultural University.
+      <footer className="mt-20 border-t border-white/[0.03] py-8 px-6 text-center relative z-10">
+        <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+          © 2026 Project Sipat Banwa — Observer of the Sky<br />
+          <span className="text-slate-600">Electronics Engineering Department - Pampanga State University</span>
         </p>
       </footer>
     </div>
