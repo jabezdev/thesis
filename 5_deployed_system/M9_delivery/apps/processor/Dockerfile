@@ -21,6 +21,9 @@ COPY apps/processor apps/processor
 # Set working directory to processor for execution
 WORKDIR /app/apps/processor
 
+# Non-sensitive runtime config — can be overridden by VPS environment variables
+ENV CONVEX_URL=https://elegant-blackbird-812.convex.cloud
+
 # Expose sync endpoint port
 EXPOSE 3001
 
