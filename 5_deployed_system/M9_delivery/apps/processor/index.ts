@@ -177,6 +177,26 @@ async function startProcessor() {
           return new Response('Unauthorized', { status: 401 });
         }
         console.log('[HTTP /sync] Immediate sync triggered.');
+
+        let body: any = {};
+        try { body = await req.json(); } catch { /* no body is fine */ }
+
+        // If the mutation passed calibration data directly, write it to RTDB immediately
+        // so Public/Status pages receive the update within this HTTP round-trip.
+        if (body.nodeId && body.calibration) {
+          try {
+            await rtdb.ref(`nodes/${body.nodeId}/metadata/calibration`).set(body.calibration);
+            nodeMetaCache.set(body.nodeId, {
+              ...nodeMetaCache.get(body.nodeId),
+              calibration: body.calibration,
+            });
+            console.log(`[HTTP /sync] Wrote calibration for ${body.nodeId} directly to RTDB.`);
+          } catch (err) {
+            console.error('[HTTP /sync] Failed to write calibration to RTDB:', err);
+          }
+        }
+
+        // Full metadata sync runs in the background for all other fields/nodes.
         syncConvexMetadata().catch(console.error);
         return new Response(JSON.stringify({ ok: true }), {
           headers: { 'Content-Type': 'application/json' },

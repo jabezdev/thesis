@@ -100,11 +100,18 @@ export const deleteNode = mutation({
 export const updateCalibration = mutation({
   args: { nodeId: v.id("nodes"), calibration: calibrationFields },
   handler: async (ctx, args) => {
+    const cal = args.calibration;
+    const allFinite = Object.values(cal).every(Number.isFinite);
+    if (!allFinite) throw new Error("All calibration values must be finite numbers.");
     await ctx.db.patch(args.nodeId, {
-      calibration: args.calibration,
+      calibration: cal,
       last_maintained_at: Date.now(),
     });
-    await ctx.scheduler.runAfter(0, internal.sync.triggerRtdbSync, {});
+    const node = await ctx.db.get(args.nodeId);
+    await ctx.scheduler.runAfter(0, internal.sync.triggerRtdbSync, {
+      nodeId: node?.node_id,
+      calibration: cal,
+    });
   },
 });
 

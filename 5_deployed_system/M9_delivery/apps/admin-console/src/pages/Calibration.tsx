@@ -22,6 +22,11 @@ export default function Calibration() {
 
   const handleSave = async () => {
     if (!selectedNodeId || !calValues) return;
+    const invalid = Object.entries(calValues).filter(([, v]) => !Number.isFinite(v as number));
+    if (invalid.length > 0) {
+      alert(`Invalid value for: ${invalid.map(([k]) => k).join(", ")}. All fields must be filled with valid numbers.`);
+      return;
+    }
     setIsSaving(true);
     try {
       await updateCalibration({ nodeId: selectedNodeId as any, calibration: calValues });
@@ -109,7 +114,7 @@ export default function Calibration() {
                                    type="number" step="0.001"
                                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 outline-none focus:border-blue-500 transition-all font-mono"
                                    value={calValues[`${sensor.key}_offset`]}
-                                   onChange={(e) => setCalValues({...calValues, [`${sensor.key}_offset`]: parseFloat(e.target.value)})}
+                                   onChange={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) setCalValues({...calValues, [`${sensor.key}_offset`]: v}); }}
                                  />
                                  <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 pointer-events-none">+</div>
                               </div>
@@ -123,7 +128,7 @@ export default function Calibration() {
                                     type="number" step="0.001"
                                     className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 outline-none focus:border-blue-500 transition-all font-mono"
                                     value={calValues[`${sensor.key}_scalar`]}
-                                    onChange={(e) => setCalValues({...calValues, [`${sensor.key}_scalar`]: parseFloat(e.target.value)})}
+                                    onChange={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) setCalValues({...calValues, [`${sensor.key}_scalar`]: v}); }}
                                   />
                                   <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 pointer-events-none">×</div>
                                </div>
