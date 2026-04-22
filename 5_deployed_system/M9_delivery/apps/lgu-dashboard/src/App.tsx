@@ -174,6 +174,17 @@ function formatStamp(epoch: number | null): string {
   }).format(d)
 }
 
+function formatClock(epoch: number | null): string {
+  if (epoch == null) return '--'
+  const d = new Date(epoch)
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: MANILA_TZ,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }).format(d).replace(' ', '')
+}
+
 function emptyStats(): MetricStats {
   return { min: null, max: null, avg: null, minTs: null, maxTs: null, count: 0 }
 }
@@ -692,28 +703,24 @@ function App() {
                     label: 'Heat Index',
                     accent: 'text-rose-500',
                     tone: 'from-rose-500/20 via-rose-500/5 to-transparent border-rose-200/80 dark:border-rose-900/70',
-                    chip: 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300',
                   },
                   {
                     key: 'temp_corrected' as const,
                     label: 'Air Temp',
                     accent: 'text-orange-500',
                     tone: 'from-orange-500/20 via-orange-500/5 to-transparent border-orange-200/80 dark:border-orange-900/70',
-                    chip: 'bg-orange-100 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300',
                   },
                   {
                     key: 'hum_corrected' as const,
                     label: 'Humidity',
                     accent: 'text-teal-500',
                     tone: 'from-teal-500/20 via-teal-500/5 to-transparent border-teal-200/80 dark:border-teal-900/70',
-                    chip: 'bg-teal-100 text-teal-700 dark:bg-teal-950/60 dark:text-teal-300',
                   },
                   {
                     key: 'rain_corrected' as const,
                     label: 'Precipitation',
                     accent: 'text-blue-500',
                     tone: 'from-blue-500/20 via-blue-500/5 to-transparent border-blue-200/80 dark:border-blue-900/70',
-                    chip: 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300',
                   },
                 ]).map((row) => (
                   <div key={row.key} className="flex flex-col gap-2">
@@ -736,21 +743,16 @@ function App() {
                               </div>
                             ) : (
                               <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${row.chip}`}>Samples</span>
-                                  <span className="text-sm font-black text-slate-800 dark:text-slate-100">{s.count}</span>
-                                </div>
-
                                 <div className="grid grid-cols-3 gap-2">
                                   <div className="rounded-lg border border-slate-200/80 dark:border-slate-700/80 bg-white/70 dark:bg-slate-900/50 px-2 py-1.5">
                                     <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Min</p>
                                     <p className="text-xs font-black text-slate-800 dark:text-slate-100">{fmt(s.min)}</p>
-                                    <p className="text-[9px] text-slate-400 truncate">{formatStamp(s.minTs)}</p>
+                                    <p className="text-[9px] text-slate-400 truncate">{formatClock(s.minTs)}</p>
                                   </div>
                                   <div className="rounded-lg border border-slate-200/80 dark:border-slate-700/80 bg-white/70 dark:bg-slate-900/50 px-2 py-1.5">
                                     <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Max</p>
                                     <p className="text-xs font-black text-slate-800 dark:text-slate-100">{fmt(s.max)}</p>
-                                    <p className="text-[9px] text-slate-400 truncate">{formatStamp(s.maxTs)}</p>
+                                    <p className="text-[9px] text-slate-400 truncate">{formatClock(s.maxTs)}</p>
                                   </div>
                                   <div className="rounded-lg border border-slate-200/80 dark:border-slate-700/80 bg-white/70 dark:bg-slate-900/50 px-2 py-1.5">
                                     <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Avg</p>
