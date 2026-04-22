@@ -1,9 +1,11 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Card, Badge, Stats } from '@panahon/ui'
-import { Server, Activity, Wifi, Cpu, Sun, Zap, CloudOff } from 'lucide-react'
+import { Card, Badge } from '@panahon/ui'
+import { Activity, Wifi, Cpu, Sun, Zap, CloudOff, Radio, Rocket, ListTree, Database } from 'lucide-react'
 import { ref, onValue } from 'firebase/database'
+import { collection, query, orderBy, limit, onSnapshot, documentId } from 'firebase/firestore'
 import { rtdb } from './firebase'
-import { applyCalibration, DEFAULT_CALIBRATION, type RawSensorData, type ProcessedData } from '@panahon/shared'
+import { db } from './firebase'
+import { applyCalibration, type RawSensorData } from '@panahon/shared'
 
 /**
  * @panahonStatus — Fleet Monitoring Engine
@@ -13,7 +15,136 @@ export default function App() {
   const [nodeIds, setNodeIds] = useState<string[]>([]);
   const [nodesMetadata, setNodesMetadata] = useState<Record<string, any>>({});
   const [latestData, setLatestData] = useState<Record<string, RawSensorData>>({});
+  const [latestWeatherPacket, setLatestWeatherPacket] = useState<Record<string, RawSensorData>>({});
+  const [latestTelemetryPacket, setLatestTelemetryPacket] = useState<Record<string, Record<string, any>>>({});
+  const [latestHeartbeatPacket, setLatestHeartbeatPacket] = useState<Record<string, Record<string, any>>>({});
+  const [latestStartupPacket, setLatestStartupPacket] = useState<Record<string, Record<string, any>>>({});
   const [now, setNow] = useState(Date.now());
+
+  const packetFieldOrder = [
+    'ts', 'timestamp', 'node_id', 'firmware', 'uptime_ms', 'uptime_h', 'temp', 'hum', 'rain',
+    'batt_v', 'batt_i', 'solar_v', 'solar_i', 'samples', 'wifi_rssi', 'free_heap', 'min_heap',
+    'queue_depth', 'pending_backlog', 'send_ok', 'send_fail', 'sd_fail', 'mb_errs', 'i2c_errs',
+    'wifi_reconn', 'pending_cursor', 'pending_total'
+  ];
+
+  const hasWeatherValues = (packet: any) => {
+    return Number.isFinite(packet?.temp) && Number.isFinite(packet?.hum) && Number.isFinite(packet?.rain)
+  }
+
+  const heatIndex = (t: number, rh: number): number | null => {
+    if (t < 27 || rh < 40) return null
+    return (
+      -8.78469475556 + 1.61139411 * t + 2.33854883889 * rh
+      - 0.14611605 * t * rh - 0.012308094 * t * t
+      - 0.0164248277778 * rh * rh + 0.002211732 * t * t * rh
+      + 0.00072546 * t * rh * rh - 0.000003582 * t * t * rh * rh
+    )
+  }
+
+  const formatPacketValue = (value: any): string => {
+    if (value == null) return '--';
+    if (typeof value === 'number') return Number.isInteger(value) ? `${value}` : value.toFixed(2);
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    return String(value);
+  }
+
+  const decodeFirestoreTypedValue = (value: any): any => {
+    if (!value || typeof value !== 'object') return value;
+    if ('stringValue' in value) return value.stringValue;
+    if ('integerValue' in value) return Number(value.integerValue);
+    if ('doubleValue' in value) return Number(value.doubleValue);
+    if ('booleanValue' in value) return Boolean(value.booleanValue);
+    if ('nullValue' in value) return null;
+    if ('timestampValue' in value) return value.timestampValue;
+    if ('mapValue' in value) {
+      const fields = value.mapValue?.fields ?? {};
+      return Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, decodeFirestoreTypedValue(v)]));
+    }
+    if ('arrayValue' in value) {
+      const values = value.arrayValue?.values ?? [];
+      return values.map((entry: any) => decodeFirestoreTypedValue(entry));
+    }
+    return value;
+  }
+
+  const normalizeFirestorePacket = (raw: Record<string, any>): Record<string, any> => {
+    if (raw?.fields && typeof raw.fields === 'object') {
+      return Object.fromEntries(
+        Object.entries(raw.fields).map(([k, v]) => [k, decodeFirestoreTypedValue(v)])
+      );
+    }
+    return raw;
+  }
+
+  const resolveNodeId = (packet: Record<string, any>, docId: string, kind: 'startup' | 'heartbeat'): string | undefined => {
+    if (typeof packet?.node_id === 'string' && packet.node_id.length > 0) return packet.node_id;
+
+    if (kind === 'heartbeat' && docId.includes('_hb_')) {
+      return docId.split('_hb_')[0];
+    }
+
+    const startupLike = docId.match(/^(.*)_\d+$/);
+    if (startupLike?.[1]) return startupLike[1];
+
+    return undefined;
+  }
+
+  const flattenPacket = (packet: Record<string, any> | undefined, root = ''): Array<{ key: string; value: any }> => {
+    if (!packet) return [];
+
+    const flat: Array<{ key: string; value: any }> = [];
+    const walk = (value: any, path: string) => {
+      if (value == null) {
+        flat.push({ key: path, value: null });
+        return;
+      }
+
+      if (Array.isArray(value)) {
+        if (value.length === 0) {
+          flat.push({ key: path, value: '[]' });
+          return;
+        }
+        value.forEach((item, idx) => {
+          const childPath = `${path}[${idx}]`;
+          if (item && typeof item === 'object') {
+            walk(item, childPath);
+          } else {
+            flat.push({ key: childPath, value: item });
+          }
+        });
+        return;
+      }
+
+      if (typeof value === 'object') {
+        const entries = Object.entries(value);
+        if (entries.length === 0) {
+          flat.push({ key: path, value: '{}' });
+          return;
+        }
+        entries.forEach(([k, v]) => {
+          walk(v, path ? `${path}.${k}` : k);
+        });
+        return;
+      }
+
+      flat.push({ key: path || root, value });
+    };
+
+    walk(packet, root);
+
+    const rank = (key: string) => {
+      const top = key.split(/[.[]/)[0];
+      const idx = packetFieldOrder.indexOf(top);
+      return idx === -1 ? Number.MAX_SAFE_INTEGER : idx;
+    };
+
+    return flat.sort((a, b) => {
+      const byRank = rank(a.key) - rank(b.key);
+      if (byRank !== 0) return byRank;
+      return a.key.localeCompare(b.key);
+    });
+  }
 
   // Update "now" every minute for "last seen" relative time precision
   useEffect(() => {
@@ -51,14 +182,88 @@ export default function App() {
       const latestRef = ref(rtdb, `nodes/${id}/latest`);
       const unsubLatest = onValue(latestRef, (snapshot) => {
         if (snapshot.exists()) {
-          setLatestData(prev => ({ ...prev, [id]: snapshot.val() }));
+          const packet = snapshot.val();
+          setLatestData(prev => ({ ...prev, [id]: packet }));
+          if (hasWeatherValues(packet)) {
+            setLatestWeatherPacket(prev => ({ ...prev, [id]: packet }));
+          }
         }
       });
       unsubs.push(unsubLatest);
+
+      // Last-hour telemetry listener for locating latest weather payload packet.
+      const lastHourRef = ref(rtdb, `nodes/${id}/last_hour`);
+      const unsubLastHour = onValue(lastHourRef, (snapshot) => {
+        if (!snapshot.exists()) return;
+        const packets = snapshot.val() as Record<string, RawSensorData>;
+        const latestWeather = Object.entries(packets)
+          .sort(([a], [b]) => Number(b) - Number(a))
+          .map(([, packet]) => packet)
+          .find((packet) => hasWeatherValues(packet));
+
+        if (latestWeather) {
+          setLatestWeatherPacket(prev => ({ ...prev, [id]: latestWeather }));
+        }
+      });
+      unsubs.push(unsubLastHour);
     });
 
     return () => unsubs.forEach(u => u());
   }, [nodeIds]);
+
+  // 3. Listen to startup packets from Firestore and keep latest per node.
+  useEffect(() => {
+    const startupQuery = query(collection(db, 'startup_0v3'), orderBy(documentId(), 'desc'), limit(3000));
+
+    return onSnapshot(startupQuery, (snapshot) => {
+      const latestByNode: Record<string, Record<string, any>> = {};
+
+      snapshot.docs.forEach((docSnap) => {
+        const normalized = normalizeFirestorePacket(docSnap.data() as Record<string, any>);
+        const nodeId = resolveNodeId(normalized, docSnap.id, 'startup');
+        if (!nodeId || latestByNode[nodeId]) return;
+        latestByNode[nodeId] = { ...normalized, _doc_id: docSnap.id };
+      });
+
+      setLatestStartupPacket(latestByNode);
+    });
+  }, []);
+
+  // 4. Listen to heartbeat packets from Firestore and keep latest per node.
+  useEffect(() => {
+    const heartbeatQuery = query(collection(db, 'heartbeat_0v3'), orderBy(documentId(), 'desc'), limit(3000));
+
+    return onSnapshot(heartbeatQuery, (snapshot) => {
+      const latestByNode: Record<string, Record<string, any>> = {};
+
+      snapshot.docs.forEach((docSnap) => {
+        const normalized = normalizeFirestorePacket(docSnap.data() as Record<string, any>);
+        const nodeId = resolveNodeId(normalized, docSnap.id, 'heartbeat');
+        if (!nodeId || latestByNode[nodeId]) return;
+        latestByNode[nodeId] = { ...normalized, _doc_id: docSnap.id };
+      });
+
+      setLatestHeartbeatPacket(latestByNode);
+    });
+  }, []);
+
+  // 5. Listen to latest node_data packets from Firestore and keep latest per node.
+  useEffect(() => {
+    const dataQuery = query(collection(db, 'node_data_0v3'), orderBy(documentId(), 'desc'), limit(3000));
+
+    return onSnapshot(dataQuery, (snapshot) => {
+      const latestByNode: Record<string, Record<string, any>> = {};
+
+      snapshot.docs.forEach((docSnap) => {
+        const normalized = normalizeFirestorePacket(docSnap.data() as Record<string, any>);
+        const nodeId = resolveNodeId(normalized, docSnap.id, 'startup');
+        if (!nodeId || latestByNode[nodeId]) return;
+        latestByNode[nodeId] = { ...normalized, _doc_id: docSnap.id };
+      });
+
+      setLatestTelemetryPacket(latestByNode);
+    });
+  }, []);
 
   // Global Health Logic
   const systemStatus = useMemo(() => {
@@ -126,13 +331,25 @@ export default function App() {
             {nodeIds.map(id => {
               const meta = nodesMetadata[id];
               const data = latestData[id];
+              const weatherPacket = latestWeatherPacket[id] || (hasWeatherValues(data) ? data : undefined);
+              const telemetryPacket = latestTelemetryPacket[id];
+              const startupPacket = latestStartupPacket[id];
+              const heartbeatPacket = latestHeartbeatPacket[id];
               const processed = data && meta?.calibration ? applyCalibration(data, meta.calibration) : null;
+              const processedWeather = weatherPacket && meta?.calibration ? applyCalibration(weatherPacket, meta.calibration) : null;
+              const hi = processedWeather ? heatIndex(processedWeather.temp_corrected, processedWeather.hum_corrected) : null;
               
               if (!meta) return null;
 
               const ageSeconds = data ? (Date.now() - new Date(data.ts).getTime()) / 1000 : Infinity;
               const isOffline = ageSeconds > 600; // 10 mins
               const isCharging = data && data.solar_i > 50;
+              const startupSeen = Boolean(startupPacket);
+              const startupTime = startupPacket?.timestamp || startupPacket?.history?.[0]?.ts || '--';
+              const weatherFields = flattenPacket(weatherPacket as Record<string, any> | undefined);
+              const telemetryFields = flattenPacket(telemetryPacket);
+              const heartbeatFields = flattenPacket(heartbeatPacket);
+              const startupFields = flattenPacket(startupPacket);
 
               return (
                 <Card key={id} className={`group overflow-hidden bg-slate-900/40 backdrop-blur-md border border-slate-800/50 hover:border-slate-700/80 transition-all duration-500 rounded-[2rem] shadow-2xl relative ${isOffline ? 'opacity-80 saturate-[0.25]' : ''}`}>
@@ -168,6 +385,15 @@ export default function App() {
                         <div className="flex items-center md:justify-end gap-2 text-white">
                            {isOffline ? <CloudOff size={16} className="text-rose-500" /> : <Wifi size={16} className="text-emerald-400 shadow-emerald-500/50" />}
                            <span className="font-bold text-sm">{isOffline ? 'LOST' : ageSeconds < 90 ? 'LATEST' : 'STALE'}</span>
+                        </div>
+                      </div>
+                      <div className="text-left md:text-right border-l md:border-l-0 pl-4 md:pl-0 border-white/10">
+                        <p className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500 mb-1">Startup Packet</p>
+                        <div className="flex items-center md:justify-end gap-2">
+                          <span className={`h-2.5 w-2.5 rounded-full ${startupSeen ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]' : 'bg-rose-500'}`} />
+                          <span className={`font-bold text-sm ${startupSeen ? 'text-emerald-300' : 'text-rose-400'}`}>
+                            {startupSeen ? 'RECEIVED' : 'WAITING'}
+                          </span>
                         </div>
                       </div>
                       <div className="text-left md:text-right border-l md:border-l-0 pl-4 md:pl-0 border-white/10">
@@ -245,6 +471,168 @@ export default function App() {
                           CHARGING
                         </div>
                       )}
+                    </div>
+                  </div>
+
+                  {/* Latest Weather Packet */}
+                  <div className="px-8 py-6 border-t border-white/[0.03] bg-white/[0.01]">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+                      <p className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">Latest Weather Packet</p>
+                      <p className="text-[10px] font-mono text-slate-500">
+                        {weatherPacket ? new Date(weatherPacket.ts).toLocaleString() : 'No weather packet yet'}
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                      {[
+                        { label: 'Air Temp', value: processedWeather?.temp_corrected, unit: '°C', color: 'text-orange-400' },
+                        { label: 'Humidity', value: processedWeather?.hum_corrected, unit: '%', color: 'text-teal-400' },
+                        { label: 'Precip', value: processedWeather?.rain_corrected, unit: 'mm', color: 'text-blue-400' },
+                        { label: 'Heat Index', value: hi ?? processedWeather?.temp_corrected, unit: '°C', color: 'text-rose-400' },
+                      ].map((metric) => (
+                        <div key={metric.label} className="rounded-xl border border-white/[0.05] bg-slate-950/30 p-3">
+                          <p className="text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1">{metric.label}</p>
+                          <p className={`text-xl font-black tracking-tight ${metric.color}`}>
+                            {metric.value == null ? '--' : metric.value.toFixed(1)}
+                            <span className="text-xs text-slate-500 ml-1">{metric.unit}</span>
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Whole Packet Inspector */}
+                  <div className="px-8 py-6 border-t border-white/[0.03] bg-black/10">
+                    <div className="flex items-center gap-2 mb-4">
+                      <ListTree size={14} className="text-slate-400" />
+                      <p className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">Whole Packet Inspector</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-4 gap-4">
+                      <div className="rounded-2xl border border-white/[0.05] bg-slate-950/40 overflow-hidden">
+                        <div className="px-4 py-3 border-b border-white/[0.05] flex items-center justify-between">
+                          <p className="text-[11px] font-black uppercase tracking-widest text-violet-300 flex items-center gap-2">
+                            <Database size={12} /> Raw Data Packet
+                          </p>
+                          <span className="text-[10px] font-mono text-slate-500">{telemetryPacket?._doc_id || '--'}</span>
+                        </div>
+                        <div className="px-4 py-3 grid grid-cols-2 gap-2 border-b border-white/[0.05] bg-white/[0.01]">
+                          <div className="rounded-lg border border-white/[0.05] p-2">
+                            <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">Timestamp</p>
+                            <p className="text-xs font-black text-violet-200 truncate">{telemetryPacket?.timestamp || '--'}</p>
+                          </div>
+                          <div className="rounded-lg border border-white/[0.05] p-2">
+                            <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">Samples</p>
+                            <p className="text-sm font-black text-violet-300">{telemetryPacket?.history?.length ?? '--'}</p>
+                          </div>
+                        </div>
+                        <div className="max-h-72 overflow-auto">
+                          {telemetryFields.length === 0 ? (
+                            <p className="px-4 py-6 text-xs text-slate-500">No raw data packet available.</p>
+                          ) : (
+                            telemetryFields.map((field) => (
+                              <div key={`data-${field.key}`} className="px-4 py-2 border-b border-white/[0.03] grid grid-cols-[1.2fr_1fr] gap-3 text-xs">
+                                <span className="text-slate-400 break-all">{field.key}</span>
+                                <span className="font-mono text-slate-200 text-right break-all">{formatPacketValue(field.value)}</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-white/[0.05] bg-slate-950/40 overflow-hidden">
+                        <div className="px-4 py-3 border-b border-white/[0.05] flex items-center justify-between">
+                          <p className="text-[11px] font-black uppercase tracking-widest text-blue-300 flex items-center gap-2">
+                            <Sun size={12} /> Weather Packet
+                          </p>
+                          <span className="text-[10px] font-mono text-slate-500">{weatherPacket?.ts || '--'}</span>
+                        </div>
+                        <div className="px-4 py-3 grid grid-cols-2 gap-2 border-b border-white/[0.05] bg-white/[0.01]">
+                          <div className="rounded-lg border border-white/[0.05] p-2">
+                            <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">Temp</p>
+                            <p className="text-sm font-black text-orange-300">{processedWeather ? `${processedWeather.temp_corrected.toFixed(1)} °C` : '--'}</p>
+                          </div>
+                          <div className="rounded-lg border border-white/[0.05] p-2">
+                            <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">Humidity</p>
+                            <p className="text-sm font-black text-teal-300">{processedWeather ? `${processedWeather.hum_corrected.toFixed(1)} %` : '--'}</p>
+                          </div>
+                        </div>
+                        <div className="max-h-72 overflow-auto">
+                          {weatherFields.length === 0 ? (
+                            <p className="px-4 py-6 text-xs text-slate-500">No weather packet available.</p>
+                          ) : (
+                            weatherFields.map((field) => (
+                              <div key={`weather-${field.key}`} className="px-4 py-2 border-b border-white/[0.03] grid grid-cols-[1.2fr_1fr] gap-3 text-xs">
+                                <span className="text-slate-400 break-all">{field.key}</span>
+                                <span className="font-mono text-slate-200 text-right break-all">{formatPacketValue(field.value)}</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-white/[0.05] bg-slate-950/40 overflow-hidden">
+                        <div className="px-4 py-3 border-b border-white/[0.05] flex items-center justify-between">
+                          <p className="text-[11px] font-black uppercase tracking-widest text-emerald-300 flex items-center gap-2">
+                            <Radio size={12} /> Heartbeat Packet
+                          </p>
+                          <span className="text-[10px] font-mono text-slate-500">{heartbeatPacket?._doc_id || '--'}</span>
+                        </div>
+                        <div className="px-4 py-3 grid grid-cols-2 gap-2 border-b border-white/[0.05] bg-white/[0.01]">
+                          <div className="rounded-lg border border-white/[0.05] p-2">
+                            <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">RSSI</p>
+                            <p className="text-sm font-black text-emerald-300">{heartbeatPacket?.wifi_rssi ?? '--'} dBm</p>
+                          </div>
+                          <div className="rounded-lg border border-white/[0.05] p-2">
+                            <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">Queue Depth</p>
+                            <p className="text-sm font-black text-emerald-200">{heartbeatPacket?.queue_depth ?? '--'}</p>
+                          </div>
+                        </div>
+                        <div className="max-h-72 overflow-auto">
+                          {heartbeatFields.length === 0 ? (
+                            <p className="px-4 py-6 text-xs text-slate-500">No heartbeat packet available.</p>
+                          ) : (
+                            heartbeatFields.map((field) => (
+                              <div key={`heartbeat-${field.key}`} className="px-4 py-2 border-b border-white/[0.03] grid grid-cols-[1.2fr_1fr] gap-3 text-xs">
+                                <span className="text-slate-400 break-all">{field.key}</span>
+                                <span className="font-mono text-slate-200 text-right break-all">{formatPacketValue(field.value)}</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-white/[0.05] bg-slate-950/40 overflow-hidden">
+                        <div className="px-4 py-3 border-b border-white/[0.05] flex items-center justify-between">
+                          <p className="text-[11px] font-black uppercase tracking-widest text-amber-300 flex items-center gap-2">
+                            <Rocket size={12} /> Startup Packet
+                          </p>
+                          <span className="text-[10px] font-mono text-slate-500">{startupTime}</span>
+                        </div>
+                        <div className="px-4 py-3 grid grid-cols-2 gap-2 border-b border-white/[0.05] bg-white/[0.01]">
+                          <div className="rounded-lg border border-white/[0.05] p-2">
+                            <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">Startup</p>
+                            <p className={`text-sm font-black ${startupSeen ? 'text-amber-200' : 'text-rose-400'}`}>
+                              {startupSeen ? 'Seen' : 'Not yet'}
+                            </p>
+                          </div>
+                          <div className="rounded-lg border border-white/[0.05] p-2">
+                            <p className="text-[9px] uppercase tracking-widest text-slate-500 font-black">Firmware</p>
+                            <p className="text-sm font-black text-amber-300">{startupPacket?.health?.firmware || '--'}</p>
+                          </div>
+                        </div>
+                        <div className="max-h-72 overflow-auto">
+                          {startupFields.length === 0 ? (
+                            <p className="px-4 py-6 text-xs text-slate-500">No startup packet available.</p>
+                          ) : (
+                            startupFields.map((field) => (
+                              <div key={`startup-${field.key}`} className="px-4 py-2 border-b border-white/[0.03] grid grid-cols-[1.2fr_1fr] gap-3 text-xs">
+                                <span className="text-slate-400 break-all">{field.key}</span>
+                                <span className="font-mono text-slate-200 text-right break-all">{formatPacketValue(field.value)}</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
 

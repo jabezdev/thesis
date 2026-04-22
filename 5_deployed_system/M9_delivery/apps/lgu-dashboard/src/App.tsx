@@ -690,10 +690,38 @@ function App() {
                 </div>
 
                 {([
-                  { key: 'hi' as const, label: 'Heat Index', unit: '°C', accent: 'text-rose-500' },
-                  { key: 'temp_corrected' as const, label: 'Air Temp', unit: '°C', accent: 'text-orange-500' },
-                  { key: 'hum_corrected' as const, label: 'Humidity', unit: '%', accent: 'text-teal-500' },
-                  { key: 'rain_corrected' as const, label: 'Precipitation', unit: 'mm', accent: 'text-blue-500' },
+                  {
+                    key: 'hi' as const,
+                    label: 'Heat Index',
+                    unit: '°C',
+                    accent: 'text-rose-500',
+                    tone: 'from-rose-500/20 via-rose-500/5 to-transparent border-rose-200/80 dark:border-rose-800/80',
+                    chip: 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300',
+                  },
+                  {
+                    key: 'temp_corrected' as const,
+                    label: 'Air Temp',
+                    unit: '°C',
+                    accent: 'text-orange-500',
+                    tone: 'from-orange-500/20 via-orange-500/5 to-transparent border-orange-200/80 dark:border-orange-800/80',
+                    chip: 'bg-orange-100 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300',
+                  },
+                  {
+                    key: 'hum_corrected' as const,
+                    label: 'Humidity',
+                    unit: '%',
+                    accent: 'text-teal-500',
+                    tone: 'from-teal-500/20 via-teal-500/5 to-transparent border-teal-200/80 dark:border-teal-800/80',
+                    chip: 'bg-teal-100 text-teal-700 dark:bg-teal-950/60 dark:text-teal-300',
+                  },
+                  {
+                    key: 'rain_corrected' as const,
+                    label: 'Precipitation',
+                    unit: 'mm',
+                    accent: 'text-blue-500',
+                    tone: 'from-blue-500/20 via-blue-500/5 to-transparent border-blue-200/80 dark:border-blue-800/80',
+                    chip: 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300',
+                  },
                 ]).map((row) => (
                   <div key={row.key} className="flex flex-col gap-1.5">
                     <p className={`text-sm font-black uppercase tracking-wide ${row.accent}`}>{row.label}</p>
@@ -706,26 +734,40 @@ function App() {
                         return (
                           <div
                             key={`${row.key}-${day.key}`}
-                            className={`rounded-xl p-3 border ${day.isToday
-                              ? 'bg-gradient-to-br from-indigo-50 to-white dark:from-indigo-950/40 dark:to-slate-900 border-indigo-300/90 dark:border-indigo-700 shadow-sm'
-                              : 'bg-slate-50/70 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700'
+                            className={`rounded-xl p-3 border bg-gradient-to-br ${row.tone} ${day.isToday
+                              ? 'ring-1 ring-indigo-300/80 dark:ring-indigo-700 shadow-md shadow-indigo-500/10'
+                              : 'bg-slate-50/75 dark:bg-slate-800/45'
                             }`}
                           >
                             {s.count === 0 ? (
-                              <div className="h-full flex items-center justify-center text-xs text-slate-400 italic">No data</div>
+                              <div className="h-full min-h-[104px] flex flex-col items-center justify-center gap-1 text-center">
+                                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">No data</p>
+                                <p className="text-[10px] text-slate-400">No samples logged for this day</p>
+                              </div>
                             ) : (
-                              <div className="space-y-1.5">
-                                <p className="text-xs text-slate-600 dark:text-slate-300">
-                                  <span className="font-bold">Min:</span> {fmt(s.min)}{row.unit}
-                                </p>
-                                <p className="text-[10px] text-slate-400">{formatStamp(s.minTs)}</p>
-                                <p className="text-xs text-slate-600 dark:text-slate-300">
-                                  <span className="font-bold">Max:</span> {fmt(s.max)}{row.unit}
-                                </p>
-                                <p className="text-[10px] text-slate-400">{formatStamp(s.maxTs)}</p>
-                                <p className="text-xs text-slate-600 dark:text-slate-300">
-                                  <span className="font-bold">Avg:</span> {fmt(s.avg)}{row.unit}
-                                </p>
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${row.chip}`}>Samples</span>
+                                  <span className="text-sm font-black text-slate-800 dark:text-slate-100">{s.count}</span>
+                                </div>
+
+                                <div className="grid grid-cols-3 gap-2">
+                                  <div className="rounded-lg border border-slate-200/80 dark:border-slate-700/80 bg-white/70 dark:bg-slate-900/50 px-2 py-1.5">
+                                    <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Min</p>
+                                    <p className="text-xs font-black text-slate-800 dark:text-slate-100">{fmt(s.min)}{row.unit}</p>
+                                    <p className="text-[9px] text-slate-400 truncate">{formatStamp(s.minTs)}</p>
+                                  </div>
+                                  <div className="rounded-lg border border-slate-200/80 dark:border-slate-700/80 bg-white/70 dark:bg-slate-900/50 px-2 py-1.5">
+                                    <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Max</p>
+                                    <p className="text-xs font-black text-slate-800 dark:text-slate-100">{fmt(s.max)}{row.unit}</p>
+                                    <p className="text-[9px] text-slate-400 truncate">{formatStamp(s.maxTs)}</p>
+                                  </div>
+                                  <div className="rounded-lg border border-slate-200/80 dark:border-slate-700/80 bg-white/70 dark:bg-slate-900/50 px-2 py-1.5">
+                                    <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Avg</p>
+                                    <p className="text-xs font-black text-slate-800 dark:text-slate-100">{fmt(s.avg)}{row.unit}</p>
+                                    <p className="text-[9px] text-slate-400">Daily mean</p>
+                                  </div>
+                                </div>
                               </div>
                             )}
                           </div>
