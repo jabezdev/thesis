@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Card, Badge, Button } from '@panahon/ui'
 import { UserButton } from '@clerk/clerk-react'
 import { useQuery, useMutation } from 'convex/react'
 import { api } from '../../../convex/_generated/api'
 import { ref, onValue } from 'firebase/database'
-import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore'
+import { collection, query, where, orderBy, limit, getDocs, doc, getDoc } from 'firebase/firestore'
 import { rtdb, db } from './firebase'
 import {
   applyCalibration, DEFAULT_CALIBRATION,
@@ -106,7 +106,106 @@ function Sparkline({ data, dataKey, color, domain }: { data: any[]; dataKey: str
 }
 
 type HistPt = RawSensorData & { timeLabel: string; ts_epoch: number; temp_corrected: number; hum_corrected: number; rain_corrected: number; batt_v_corrected: number; solar_v_corrected: number; is_extreme_weather: boolean }
-type Page = 'live' | 'analytics'
+type Page = 'live' | 'records' | 'history'
+type MetricRow = 'hi' | 'temp_corrected' | 'hum_corrected' | 'rain_corrected'
+
+type StoredMetricStats = {
+  min: number | null
+  max: number | null
+  avg: number | null
+  count: number
+  min_ts: string | null
+  max_ts: string | null
+}
+
+type StoredDailyRecord = {
+  node_id: string
+  day_key: string
+  timezone?: string
+  metrics?: Partial<Record<MetricRow, StoredMetricStats>>
+}
+
+type MetricStats = {
+  min: number | null
+  max: number | null
+  avg: number | null
+  minTs: number | null
+  maxTs: number | null
+  count: number
+}
+
+type DayRecordStats = {
+  key: string
+  label: string
+  isToday: boolean
+  stats: Record<MetricRow, MetricStats>
+}
+
+const MANILA_TZ = 'Asia/Manila'
+
+function manilaDayKey(epoch: number): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: MANILA_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(epoch))
+}
+
+function dayLabelFromKey(dayKey: string): string {
+  const date = new Date(`${dayKey}T00:00:00+08:00`)
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: MANILA_TZ,
+    month: 'short',
+    day: 'numeric',
+  }).format(date)
+}
+
+function formatStamp(epoch: number | null): string {
+  if (epoch == null) return '--'
+  const d = new Date(epoch)
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: MANILA_TZ,
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d)
+}
+
+function emptyStats(): MetricStats {
+  return { min: null, max: null, avg: null, minTs: null, maxTs: null, count: 0 }
+}
+
+function fromStoredMetricStats(stored?: StoredMetricStats): MetricStats {
+  if (!stored || !stored.count) return emptyStats()
+  return {
+    min: stored.min ?? null,
+    max: stored.max ?? null,
+    avg: stored.avg ?? null,
+    minTs: stored.min_ts ? new Date(stored.min_ts).getTime() : null,
+    maxTs: stored.max_ts ? new Date(stored.max_ts).getTime() : null,
+    count: stored.count,
+  }
+}
+
+function applyLivePoint(base: MetricStats, value: number | null | undefined, tsEpoch: number): MetricStats {
+  if (value == null || Number.isNaN(value)) return base
+  const next: MetricStats = { ...base }
+  if (next.count === 0 || next.min == null || value < next.min) {
+    next.min = value
+    next.minTs = tsEpoch
+  }
+  if (next.count === 0 || next.max == null || value > next.max) {
+    next.max = value
+    next.maxTs = tsEpoch
+  }
+  const prevSum = (next.avg ?? 0) * next.count
+  next.count += 1
+  next.avg = (prevSum + value) / next.count
+  return next
+}
 
 
 function App() {
@@ -212,6 +311,8 @@ function App() {
   // then filter by node_id and date client-side.
   const [histData, setHistData] = useState<HistPt[]>([])
   const [histLoading, setHistLoading] = useState(false)
+  const [recordsDaily, setRecordsDaily] = useState<Record<string, StoredDailyRecord>>({})
+  const [recordsLoading, setRecordsLoading] = useState(false)
   const [timeRange, setTimeRange] = useState({
     start: new Date(Date.now() - 24 * 3_600_000).toISOString().slice(0, 16),
     end: new Date().toISOString().slice(0, 16)
@@ -267,6 +368,34 @@ function App() {
   // Only fetch automatically when the selected node changes, not when the user is modifying the time range inputs
   useEffect(() => { fetchHist(selectedNodeId, timeRange) }, [selectedNodeId, fetchHist])
 
+  const fetchRecords = useCallback(async (nodeId: string | null) => {
+    if (!nodeId) {
+      setRecordsDaily({})
+      return
+    }
+    setRecordsLoading(true)
+    try {
+      const dayKeys = Array.from({ length: 7 }, (_, i) => manilaDayKey(Date.now() - (6 - i) * 24 * 3_600_000))
+      const ids = dayKeys.map((k) => `${nodeId}_${k}`)
+      const docs = await Promise.all(ids.map((id) => getDoc(doc(db, 'm6_daily_records', id))))
+      const byDay: Record<string, StoredDailyRecord> = {}
+      for (const snap of docs) {
+        if (!snap.exists()) continue
+        const data = snap.data() as StoredDailyRecord
+        if (!data?.day_key) continue
+        byDay[data.day_key] = data
+      }
+      setRecordsDaily(byDay)
+    } catch (e) {
+      console.error('[Firestore records query failed]', e)
+      setRecordsDaily({})
+    } finally {
+      setRecordsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { fetchRecords(selectedNodeId) }, [selectedNodeId, fetchRecords])
+
   // ── Derived ────────────────────────────────────────────────────────────────
   const hi = latestData ? heatIndex(latestData.temp_corrected, latestData.hum_corrected) : null
 
@@ -278,6 +407,46 @@ function App() {
     ...d,
     hi: heatIndex(d.temp_corrected, d.hum_corrected) ?? d.temp_corrected,
   }))
+
+  const recordsByDay = useMemo<DayRecordStats[]>(() => {
+    const keys = Array.from({ length: 7 }, (_, i) => manilaDayKey(Date.now() - (6 - i) * 24 * 3_600_000))
+    const todayKey = manilaDayKey(Date.now())
+    return keys.map((key) => {
+      const doc = recordsDaily[key]
+      let stats: Record<MetricRow, MetricStats> = {
+        hi: fromStoredMetricStats(doc?.metrics?.hi),
+        temp_corrected: fromStoredMetricStats(doc?.metrics?.temp_corrected),
+        hum_corrected: fromStoredMetricStats(doc?.metrics?.hum_corrected),
+        rain_corrected: fromStoredMetricStats(doc?.metrics?.rain_corrected),
+      }
+
+      // Keep today's column live while waiting for processor rollup refresh.
+      if (key === todayKey && latestData) {
+        const tsEpoch = new Date(latestData.ts).getTime()
+        const latestHi = heatIndex(latestData.temp_corrected, latestData.hum_corrected) ?? latestData.temp_corrected
+        stats = {
+          hi: applyLivePoint(stats.hi, latestHi, tsEpoch),
+          temp_corrected: applyLivePoint(stats.temp_corrected, latestData.temp_corrected, tsEpoch),
+          hum_corrected: applyLivePoint(stats.hum_corrected, latestData.hum_corrected, tsEpoch),
+          rain_corrected: applyLivePoint(stats.rain_corrected, latestData.rain_corrected, tsEpoch),
+        }
+      }
+
+      return {
+        key,
+        label: key === todayKey ? 'Today' : dayLabelFromKey(key),
+        isToday: key === todayKey,
+        stats,
+      }
+    })
+  }, [recordsDaily, latestData])
+
+  const todayStats = useMemo(() => recordsByDay.find(d => d.isToday)?.stats ?? {
+    hi: emptyStats(),
+    temp_corrected: emptyStats(),
+    hum_corrected: emptyStats(),
+    rain_corrected: emptyStats(),
+  }, [recordsByDay])
 
   // ── CSV export ─────────────────────────────────────────────────────────────
   const handleExport = () => {
@@ -323,7 +492,8 @@ function App() {
         <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl gap-0.5">
           {([
             { key: 'live', label: 'Live Monitor', Icon: Activity },
-            { key: 'analytics', label: 'Analytics', Icon: Zap },
+            { key: 'records', label: 'Records', Icon: Radio },
+            { key: 'history', label: 'History', Icon: Zap },
           ] as const).map(({ key, label, Icon }) => (
             <button key={key} onClick={() => setPage(key)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
@@ -378,12 +548,26 @@ function App() {
                 { label: 'Heat Index', unit: '°C', value: hi ?? latestData?.temp_corrected, dataKey: 'hi', color: '#ef4444', Icon: Flame, accent: 'text-rose-500', ring: 'ring-rose-200 dark:ring-rose-900/40', data: hourWithHI, domain: [15, 60] },
               ].map(({ label, unit, value, dataKey, color, Icon, accent, ring, data, domain }) => {
                 const isHI = label === 'Heat Index'
+                const maxMetricByDataKey: Record<string, MetricStats> = {
+                  temp_corrected: todayStats.temp_corrected,
+                  hum_corrected: todayStats.hum_corrected,
+                  rain_corrected: todayStats.rain_corrected,
+                  hi: todayStats.hi,
+                }
+                const maxForCard = maxMetricByDataKey[dataKey]
                 return (
                   <Card key={label} className={`flex flex-col bg-white dark:bg-slate-900 ring-1 ${ring} p-5 overflow-hidden`}>
                     {/* Label row */}
                     <div className="flex items-center gap-2 mb-2 shrink-0">
                       <Icon size={24} className={accent} />
                       <span className={`text-xl font-black uppercase tracking-wide ${accent}`}>{label}</span>
+                      {maxForCard.max != null && maxForCard.maxTs != null && (
+                        <div className="ml-auto text-right leading-tight">
+                          <p className="text-[10px] uppercase tracking-wider font-bold text-slate-400">Max Today</p>
+                          <p className="text-xs font-bold text-slate-600 dark:text-slate-300">{fmt(maxForCard.max)}{unit}</p>
+                          <p className="text-[10px] text-slate-400">{formatStamp(maxForCard.maxTs)}</p>
+                        </div>
+                      )}
                       {isHI && !hi && (
                         <span className="ml-auto text-xs text-slate-500 dark:text-slate-400 italic font-medium">using temp</span>
                       )}
@@ -460,13 +644,109 @@ function App() {
         </main>
       )}
 
-      {/* ── PAGE 2: Analytics ────────────────────────────────────────────── */}
-      {page === 'analytics' && (
+      {/* ── PAGE 2: Records ─────────────────────────────────────────────── */}
+      {page === 'records' && (
+        <main className="p-5 max-w-[1280px] mx-auto flex flex-col gap-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Radio size={20} className="text-indigo-500" /> Records
+              </h2>
+              <p className="text-sm font-medium text-slate-600 dark:text-slate-400 mt-0.5">
+                {selectedNode?.name || selectedNodeId} - Daily min, max, and average for the last 7 days (Asia/Manila)
+              </p>
+            </div>
+            <Button onClick={() => fetchRecords(selectedNodeId)} variant="outline" className="text-xs font-bold">
+              <Radio size={13} className="mr-1" /> Refresh Records
+            </Button>
+          </div>
+
+          {recordsLoading ? (
+            <div className="flex items-center justify-center py-16 gap-3 text-slate-500">
+              <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm font-medium">Loading 7-day records...</span>
+            </div>
+          ) : (
+            <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 md:p-5 overflow-x-auto">
+              <div className="min-w-[980px] flex flex-col gap-3">
+                <div
+                  className="grid gap-3"
+                  style={{ gridTemplateColumns: 'repeat(6, minmax(120px, 1fr)) minmax(180px, 1.5fr)' }}
+                >
+                  {recordsByDay.map((day) => (
+                    <div
+                      key={`head-${day.key}`}
+                      className={`rounded-xl px-3 py-2 border text-center ${day.isToday
+                        ? 'bg-indigo-50 dark:bg-indigo-950/30 border-indigo-300 dark:border-indigo-700'
+                        : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700'
+                      }`}
+                    >
+                      <p className={`text-xs font-black uppercase tracking-wider ${day.isToday ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-500 dark:text-slate-400'}`}>
+                        {day.label}
+                      </p>
+                      <p className="text-[10px] text-slate-400">{day.key}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {([
+                  { key: 'hi' as const, label: 'Heat Index', unit: '°C', accent: 'text-rose-500' },
+                  { key: 'temp_corrected' as const, label: 'Air Temp', unit: '°C', accent: 'text-orange-500' },
+                  { key: 'hum_corrected' as const, label: 'Humidity', unit: '%', accent: 'text-teal-500' },
+                  { key: 'rain_corrected' as const, label: 'Precipitation', unit: 'mm', accent: 'text-blue-500' },
+                ]).map((row) => (
+                  <div key={row.key} className="flex flex-col gap-1.5">
+                    <p className={`text-sm font-black uppercase tracking-wide ${row.accent}`}>{row.label}</p>
+                    <div
+                      className="grid gap-3"
+                      style={{ gridTemplateColumns: 'repeat(6, minmax(120px, 1fr)) minmax(180px, 1.5fr)' }}
+                    >
+                      {recordsByDay.map((day) => {
+                        const s = day.stats[row.key]
+                        return (
+                          <div
+                            key={`${row.key}-${day.key}`}
+                            className={`rounded-xl p-3 border ${day.isToday
+                              ? 'bg-gradient-to-br from-indigo-50 to-white dark:from-indigo-950/40 dark:to-slate-900 border-indigo-300/90 dark:border-indigo-700 shadow-sm'
+                              : 'bg-slate-50/70 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700'
+                            }`}
+                          >
+                            {s.count === 0 ? (
+                              <div className="h-full flex items-center justify-center text-xs text-slate-400 italic">No data</div>
+                            ) : (
+                              <div className="space-y-1.5">
+                                <p className="text-xs text-slate-600 dark:text-slate-300">
+                                  <span className="font-bold">Min:</span> {fmt(s.min)}{row.unit}
+                                </p>
+                                <p className="text-[10px] text-slate-400">{formatStamp(s.minTs)}</p>
+                                <p className="text-xs text-slate-600 dark:text-slate-300">
+                                  <span className="font-bold">Max:</span> {fmt(s.max)}{row.unit}
+                                </p>
+                                <p className="text-[10px] text-slate-400">{formatStamp(s.maxTs)}</p>
+                                <p className="text-xs text-slate-600 dark:text-slate-300">
+                                  <span className="font-bold">Avg:</span> {fmt(s.avg)}{row.unit}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </main>
+      )}
+
+      {/* ── PAGE 3: History ─────────────────────────────────────────────── */}
+      {page === 'history' && (
         <main className="p-5 max-w-5xl mx-auto flex flex-col gap-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex-1 min-w-0">
               <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Activity size={20} className="text-blue-500 shrink-0" /> Analytics
+                <Activity size={20} className="text-blue-500 shrink-0" /> History
               </h2>
               <p className="text-sm font-medium text-slate-600 dark:text-slate-400 mt-0.5 truncate">
                 {selectedNode?.name || selectedNodeId} — {histLoading ? 'Loading…' : `${histData.length} records`}

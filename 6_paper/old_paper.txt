@@ -1,0 +1,366 @@
+PAMPANGA STATE UNIVERSITY
+		Bacolor, Pampanga
+College of Engineering and Architecture
+Department of Electronics Engineering
+
+
+
+
+Development of a Low-cost Local Weather Monitoring System 
+for Local Government Unit Application
+
+AYSON, JABEZ M. 
+CABRERA, ERVIN JOHN R.
+CRISOSTOMO, GABRIEL CARL C.
+ JADIE, ASHLEY JADE G. 
+SANTOS, KRIZLE FEYH G.
+
+September 2025
+
+
+
+
+
+ENGR. ELIAS FRANCIS G. VERGARRA
+Adviser
+
+
+
+
+
+CHAPTER 1 : INTRODUCTION
+
+Background of the Study
+
+Weather greatly influences human life, shaping daily activities, agricultural productivity, transportation, and even public health. In recent years, climate variability has resulted in more frequent and intense natural hazards such as storms, floods, droughts, and heatwaves. These extreme events cause significant disruptions to communities, destroy livelihoods, and endanger human lives.
+Countries in the Asia-Pacific region, particularly the Philippines, are highly exposed to such events due to their geographical location and tropical climate. According to the Philippine Atmospheric, Geophysical and Astronomical Services Administration (PAGASA), the country experiences an average of 20 tropical cyclones each year, many of which bring devastating impacts to lives and property. In addition, the Philippines has recently faced increasing heat extremes. For instance, during the 2024 pre-monsoon season, heat indices reached up to 53°C in Iba, Zambales, while many provinces recorded values between 42°C and 51°C— conditions that PAGASA classified as “danger” levels. These figures highlight the growing urgency of improving weather monitoring and preparedness systems at both national and local levels.
+Despite the availability of national forecasts, localized weather information remains limited or delayed for many Local Government Units (LGUs), especially those in rural and resource-constrained areas. This lack of timely and location- specific data weakens their ability to anticipate, respond to, and mitigate the effect
+of weather-related hazards. Domingo et al. (2020) found that smallholder farmers in Benguet often face challenges in applying climate information due to its complexity and lack of localization. Similarly, the United Nations Office for Disaster Risk Reduction (UNDRR, 2019) emphasized that integrating information and communication technologies (ICTs) into local governance can greatly strengthen disaster resilience. PreventionWeb (2023) also reported that automated weather stations deployed across the Philippines have significantly improved disaster preparedness, particularly in vulnerable communities. These findings underscore the importance of accessible, real-time weather information tailored to specific localities.
+Automatic Weather Stations (AWS) play a crucial role in addressing this gap. AWS are advanced technologies designed to autonomously collect, store, and transmit meteorological data such as temperature, humidity, and precipitation. They operate continuously with minimal human intervention, making them suitable for deployment in remote areas. Historically, the concept of AWS can be traced back to the mid-20th century, when early meteorologists explored automation to enhance observation networks (Wood, 2006). Over the years, advancements in digital electronics, low-power systems, and wireless communication have transformed AWS into intelligent systems capable of real-time data transmission, cloud integration, and Internet of Things (IoT) connectivity. These innovations have changed the way weather data are collected, processed, and shared, allowing for faster and more accurate monitoring.
+
+However, the widespread adoption of AWS remains limited due to several technical and economic challenges. Professional-grade AWS units used by national meteorological agencies can cost thousands of pesos, making them unaffordable for most small LGUs. In addition to cost, challenges such as unreliable connectivity, limited power supply in off-grid areas, and the need for regular sensor calibration hinder continuous operation. Rivera et al. (2023) sought to address these issues by developing a cost-effective and user-friendly local weather station that utilizes low- cost sensors and open-source platforms. Their work demonstrated that affordable, community-level AWS can still deliver accurate and reliable weather data suitable for local decision-making. Similarly, studies by Tolentino and Ladincho (2013) and Delos Santos (2023) revealed that the usefulness of climate information depends heavily on how localized and context-specific it is. Cutter et al. (2012) further emphasized that the success of disaster management efforts often relies on timely and site-specific data that directly inform local actions and policies.
+Even with international progress in AWS technology, issues such as power reliability, data interoperability, and limited technical capacity for maintenance remain obstacles, particularly in developing countries like the Philippines (Kumar et al., 2018). The absence of standardized systems for data sharing among institutions also limits the integration of localized weather data into broader national frameworks.
+Thus, these gaps create an urgent need for innovative, low-cost, and sustainable weather monitoring systems designed specifically for the needs of LGUs and local communities. The challenges reflect national and global issues surrounding localized weather monitoring, their impact becomes more pronounced when examined at the level of individual communities. The need for reliable, site- specific weather information is especially critical in areas where historical, geographical, and environmental factors heighten local risk. In this context, understanding the unique vulnerabilities of the project’s chosen site becomes essential.
+The Municipality of Bacolor presents a distinct set of hazards and community conditions that further justify the development of a localized Automatic Weather Station tailored to its needs. The municipality remains an area with significant exposure to environmental hazards. The long-term impacts of the 1991 Mount Pinatubo eruption and subsequent lahar deposition have altered the municipality’s topography, contributing to persistent risks such as localized flooding, river overflow, and sediment-related hazards during periods of intense rainfall.
+According to an employee from the Municipal Disaster Risk Reduction and Management Office (MDRRMO) of the Municipality of Bacolor, the office currently relies primarily on national weather forecasts and publicly available tools such as data from PAGASA and the Windy platform when monitoring local conditions (MDRRMO Officer, personal communication, October 2025). The respondent also mentioned that the city still does not use quantifiable, instrument-based hydrological data. Instead, barangay captains typically assess flood risks using  visual observation or the so-called “eye test” for water levels in their respective areas (MDRRMO Officer, personal communication, October 2025). The initial close interview with officer from MDRRMO also mentioned their need for acquiring an Automatic Weather Station (AWS) to meet their needs regarding quantifiable meteorological data due to their vulnerability to environmental hazards.
+Statement of the problem
+
+The Municipality of Bacolor, Pampanga currently lacks hyper-local environmental data, making it difficult to obtain accurate, area-specific information necessary for monitoring and decision-making. Existing practices rely on manual data gathering, which is labor-intensive, time-consuming, and exposes personnel to risks during adverse weather conditions. Additionally, there is no centralized system that organizes and visualizes environmental information, limiting the ability of local offices to make timely, data-driven decisions. To address these issues, this study focuses on developing and evaluating a low-cost, calibrated Automatic Weather Station (AWS) capable of providing localized, automated, and easily accessible environmental data for Bacolor.
+Based on these conditions, the study seeks to answer the following questions:
+
+    • How can a low-cost Automatic Weather Station (AWS) be designed and developed to provide accurate and reliable real-time meteorological data in terms of acceptable deviation, data transmission latency, and system uptime?
+    • How can the developed AWS be effectively deployed in Bacolor, Pampanga to generate site-specific meteorological datasets (temperature, humidity, and precipitation) with a temporal resolution of ≤15 minutes for localized environmental analysis?
+    • How can a user-friendly dashboard be developed to provide quick and clear visualization of weather information for the MDRRMO?
+
+Objectives and Deliverables
+General Objectives
+To develop and evaluate a low-cost, calibrated Automatic Weather Station (AWS) with an integrated user-friendly dashboard that provides localized, real-time environmental data to support efficient monitoring and proactive decision-making for the MDRRMO in Bacolor, Pampanga
+Specific Objectives
+
+SO1: To design and develop a low-cost Automatic Weather Station (AWS) that delivers real time meteorological data with ≤ 5% deviation from reference instruments, data transmission latency of ≤ 15 minutes and system uptime of ≥95%.
+SO2: To deploy the developed Automatic Weather Station (AWS) in Bacolor, Pampanga, and generate site-specific meteorological datasets, including temperature, humidity, and precipitation, with a temporal resolution of ≤15 minutes for localized environmental analysis.
+SO3: To design and implement a user-friendly dashboard that allows quick and clear visualization of weather information for the MDRRMO.
+
+The key deliverables of this project will include:
+
+    • A fully-autonomous calibrated, low-cost, solar-powered AWS installed in the Municipality of Bacolor, equipped with industrial-grade sensors for temperature, humidity and precipitation.
+    • A secure cloud-based database and IoT gateway for storing real-time weather data with end-to-end encryption and remote access capabilities.
+    • A web-based dashboard for LGU personnel, providing real-time monitoring, historical data analysis, and visualization tools.
+Significance of the study
+
+The results of this study are expected to benefit various sectors by providing accurate, real-time, and localized weather data, which can enhance decision- making and disaster preparedness. The significance of the study can be described as follows:
+Local Government Units (LGUs)
+
+The AWS will provide LGU personnel with continuous access to meteorological data, enabling timely and evidence-based decisions in disaster management, and community safety initiatives. This can improve preparedness for extreme weather events and mitigate the impact of environmental hazards on the population.
+Community and Residents
+
+By providing real-time weather information through public dashboards and web portals, residents of Bacolor can stay informed about local environmental conditions, allowing them to take proactive measures during weather disturbances, heatwaves, or other environmental hazards.
+Academic and Research Communities
+
+The AWS system serves as a research tool for student researchers and academics, offering a low-cost and practical platform for studying microclimatic variations, urban heat effects, and other environmental phenomena. It eliminates the need for complex infrastructure, allowing researchers to focus on data analysis and interpretation
+
+Research Hypothesis and Assumptions
+Hypothesis
+It is hypothesized that the developed low-cost Automatic Weather Station (AWS) will meet acceptable standards of accuracy, reliability, and usability for local government applications. The system will be able to measure temperature, humidity, and precipitation using affordable sensors, produce reliable baseline data through initial calibration, improve data accuracy through signal processing and secondary calibration, demonstrate superior performance compared to calibration- only data, and provide a user-friendly IoT-based dashboard for real-time monitoring by the Municipality of Bacolor.
+
+
+Assumptions
+    1. The low-cost sensor modules used in the AWS will function properly and provide measurements that are consistent and comparable to standard instruments after calibration.
+    2. Environmental conditions at the deployment site (Municipality of Bacolor) will remain stable enough during data collection to allow accurate comparisons between datasets.
+    3. Signal-processing techniques applied to the sensor data will effectively reduce noise and improve data accuracy without introducing significant errors.
+    4. The IoT-based dashboard will reliably collect, store, and display the AWS data in real time.
+    5. Local government personnel or end-users will have the basic skills to operate and interpret data from the AWS and its dashboard.
+Scope and Delimitations
+This research investigates the development of an Automatic Weather Station (AWS) deployment system for sensor effect monitoring in the Bacolor, Pampanga.
+The environmental parameters that the AWS system will monitor include, but are not limited to:
+    • Temperature
+    • Humidity
+    • Precipitation
+
+This study has certain delimitations that may include:
+    • Data will be collected from a selected spot in Bacolor, Pampanga.
+
+    • There will be 3 environmental parameters measured that appear in the listing above.
+    • The AWS sensor node system will utilize a 4G LTE module for wireless transfer of data and an ESP32 microcontroller for processing.
+Definition of Terms
+Automatic Weather Station (AWS) – A system composed of sensors, data acquisition modules, and communication interfaces designed to automatically measure, record, and transmit meteorological data such as temperature, humidity, and precipitation in real time.
+Internet of Things (IoT) – A network of interconnected devices equipped with sensors, software, and communication capabilities that allow them to collect, exchange, and process data over the internet without requiring direct human intervention.
+Meteorological Parameters – Quantifiable environmental variables, including temperature, humidity, and precipitation, that describe the state of the atmosphere and are essential for weather observation and forecasting.
+Temperature – A measure of the thermal condition of the air, indicating how hot or cold the atmosphere is, typically expressed in degrees Celsius (°C). 
+Humidity – The amount of water vapor present in the air, expressed as a percentage. It significantly influences weather conditions and human comfort levels.
+Rainfall – The amount of precipitation, usually measured in millimeters (mm), that falls over a specific area and period.
+Microclimate – The localized atmospheric conditions within a specific area that may differ from the surrounding regions due to variations in land use, vegetation, infrastructure, and other factors.
+
+CHAPTER 2: LITERATURE REVIEW
+This chapter examines the existing literature and studies pertinent to the development and implementation of Automatic Weather Station (AWS) systems, emphasizing their applications for local government in disaster preparedness, climate monitoring, and community resilience.
+Conceptual Framework
+The IoT-based Automatic Weather Station (AWS) is designed to measure, record, and transmit key meteorological parameters such as temperature, humidity, and precipitation, within Bacolor, Pampanga. The system aims to provide real-time and historical weather data to support local government units (LGUs) in environmental monitoring.
+Independent Variables
+    • Meteorological Parameters:
+    • Temperature
+    • Humidity
+    • Precipitation
+    • Urban Setting Factors:
+        ◦ Land use and local urban characteristics influencing microclimate (e.g., building density, vegetation, impervious surfaces).
+    • Time Factors:
+        ◦ Diurnal and seasonal variations affecting weather measurements.
+Intervening Variables
+    • Sensor Accuracy and Calibration: Ensured through proper setup and quality sensors.
+    • Environmental Interference: Natural variations, extreme weather events, or localized anomalies affecting readings.
+    • Data Transmission Reliability: Network availability and ESP32 microcontroller performance ensuring consistent IoT-based data delivery.
+Dependent Variables
+    • Weather Data Outputs : Real-time and historical measurements	of temperature, humidity, and precipitation.
+    • Actionable Insights: Data used by LGUs for:
+        ◦ Disaster preparedness
+        ◦ Environmental monitoring and management
+
+Existing Work
+Automatic Weather Stations (AWS) are increasingly being implemented worldwide to provide localized, real-time meteorological data that is valuable for environmental monitoring. These systems reduce the prohibitive costs associated with traditional stations while providing accurate measurements of temperature, humidity, and precipitation (Muñoz Jr. et al., 2018; Rivera et al., 2023).
+In the Philippines, AWS networks have been adopted both nationally through PAGASA’s AWS program and locally through LGU-led prototypes. PAGASA stations provide wide coverage but are expensive to install and maintain, limiting their adoption by smaller local government units. Meanwhile, researchers and organizations have developed low-cost AWS using Arduino, Raspberry Pi, and ESP32 microcontrollers for community-level applications (Muñoz Jr. et al., 2018; Tibayan et al., 2019).
+Rivera et al. (2023) emphasized integrating IoT-based AWS with cloud connectivity to enhance data accessibility. Similarly, international works (Ioannou, 2021; Meier et al., 2017) demonstrated AWS applications in precision agriculture and climate adaptation, reinforcing the broader role of these systems beyond disaster monitoring. The Philippine context, the Department of the Interior and Local Government (DILG) has also acknowledged the value of AWS in disaster preparedness, noting their potential in improving early warning systems and climate resilience at the LGU level (DILG, 2014; PreventionWeb, 2023). 
+Below is an overview in assessing and modelling AWS in the Philippines.
+
+Reference	Methods	Data Source 	Notes
+(Muñoz Jr. et al., 2018)	Design	and implementation of Arduino-based micro-weather station with GSM alert system	Field-deployed sensors (temp, humidity, rainfall)
++database logging.	Achieved	>95% accuracy;designed for small-area, LGU use;	low-cost compared	to PAGASA-grade
+stations.
+Rivera	et al. (2023)	IoT-based AWS with	cloud integration	ESP32+ cloud database	Focused on accessibility, scalability, and
+real-time data
+
+sharing
+(PAGASA 2020)	Nationwide deployment	of AWS	under PAGASA program	PAGASA AWS
+
+network	Focused on national coverage; provides LGUs with access to localized real-time
+weather  data  for disaster risk reduction
+Ioannou (2021)	AWS applications for	precision agriculture	Global	case studies	Highlighted AWS as	decision- support tools for irrigation and climate-smart
+farming
+PreventionWeb (2023)	AWS deployment to improve disaster resilience (GSM +siren/lightalerts)	Case examples in PH	Highlighted AWS benefits	in mitigating climate risks and disasters
+DILG (2014)	
+
+National AWS program for LGU preparedness	PAGASA	AWS
+
+network	Cited high costs as a barrier for LGUs but stressed importance    in
+DRRM
+Table 1. Comparison of Methods to Assess and Model AWS in the Philippines
+
+As shown in Table 1 above, Automatic Weather Stations (AWS) have mainly been built and developed in the Philippines for different purposes, whether for disaster risk reduction, climate monitoring, or agricultural purposes. National programs facilitated by government agencies, for example from DILG (2014), offer a greater degree of coverage for the local government units (LGUs) which allows them to access localized and near real-time weather data during typhoons, floods, and other extreme weather events. However the main limitation for AWS as a service is the high price of standard AWS is still a significant barrier especially for rural LGUs (PreventionWeb, 2023).
+The development of low-cost weather stations has been a prominent area of research, aiming to democratize access to meteorological data for various applications, including agriculture, education, and localized weather forecasting (Balakit et al., 2019; Engineering Lovely Professional University Phagwara, Punjab, India et al., 2019; Ioannou et al., 2021; Santos & Ferreira, 2020; Zennaro et al., 2025). Many studies have focused on utilizing readily available components like Arduino or Raspberry Pi microcontrollers coupled with basic sensor modules to reduce costs (Antonini et al., 2020; Cortes Leon et al., 2017; Philippine Science High School - Central Luzon Campus, Pampanga, 2009, Philippines et al., 2019). While these systems offer affordability, the trade-offs often involve sensor accuracy, durability, and adherence to standardized measurement practices. Some initiatives have explored community-based weather station networks using such low-cost devices, demonstrating their potential for high-density spatial data collection (Giazzi et al., 2022; Martinez Dan William C. et al., 2023; Meier et al., 2017).
+The World Meteorological Organization (WMO) provides guidelines for the accurate and standardized measurement of meteorological variables. These guidelines cover aspects like sensor exposure, instrument calibration, and the design of protective enclosures such as the Stevenson screen (Burton, 2014). Adherence to these standards is crucial for data comparability and reliability, yet it is often a challenge for low-cost designs due to the associated costs and complexities of implementing compliant enclosures and calibration procedures (Pertijs et al., 2010). Several studies have investigated the impact of improper sensor shielding on temperature and humidity measurements, highlighting significant potential errors (Burt, 2022; Hwang et al., 2022).
+The choice of sensors is critical in any weather monitoring system. While inexpensive sensors for temperature and humidity (e.g., DHT11/22) are popular in hobbyist and some low-cost research projects (Abd AL-Nabi et al., 2024; Lopez & Villaruz, 2015) stability, and long-term reliability can be limited, especially in harsh environmental conditions. Industrial-grade sensors, though more expensive, offer higher accuracy, better stability over time, and greater resilience to environmental factors, making them more suitable for research-grade data collection (Muñoz et al., 2018). Studies comparing various sensor types have consistently shown the superior performance of industrial-grade sensors in terms of precision and durability (Scagliotti & Jorge, 2020).
+The Internet of Things (IoT) paradigm has revolutionized remote sensing. Microcontrollers like the ESP32, with built-in Wi-Fi and Bluetooth capabilities, have become popular for developing connected environmental monitoring devices due to their low power consumption, processing power, and cost-effectiveness (Ranjan Laha et al., 2022; Xu et al., 2022). Various communication protocols are used for data transmission, with Wi-Fi being common for areas with existing network infrastructure (Ouni & Saleem, 2022; Souri et al., 2022). LoRaWAN and cellular communication (GPRS/NB-IoT) are often employed for more remote deployments where Wi-Fi is unavailable, though they may introduce additional costs or complexity (Jabbar et al., 2022; Talegaon et al., 2022).
+Powering remote weather stations is a significant challenge. Solar power, coupled with rechargeable batteries, is a widely adopted solution for autonomous, off-grid operation (Balamurali et al., 2025; Mohapatra & Subudhi, 2022; Mokhtarzadeh et al., 2025; Sharma & Prakash, 2021). Research in this area focuses on optimizing power consumption of the sensing and communication modules, as well as efficient solar charging and battery management systems to ensure continuous operation, especially during periods of low solar insolation (S et al., 2022).
+Reliable data logging is essential, particularly to prevent data loss during network interruptions. On-device storage (e.g., SD cards) is a common fallback mechanism (Mabrouki et al., 2021). For data storage, management, and analysis, cloud-based platforms are increasingly utilized. Services like Firebase, AWS IoT, speak offer scalable databases, real-time data synchronization, and tools for data processing (Lopez & Villaruz, 2015). The use of such platforms facilitates easier data access, remote device management, and the development of downstream applications.
+Effective visualization of meteorological data is crucial for interpretation and decision-making. Web-based dashboards are commonly developed to display real- time and historical data through graphs, charts, and maps (Sardar Maran et al., 2021). Providing public access to live weather data and derived indices, such as the heat index, can raise awareness and inform public safety measures, especially in the context of extreme weather events (Rivera et al., 2023; Selvam & Al-Humairi, 2023).
+Research Gaps
+Despite the progress in deploying Automatic Weather Stations (AWS) in the Philippines, several limitations remain in both national and local initiatives:
+High Cost and Limited LGU Adoption
+
+AWS programs initiated by the government address first essential gaps in
+
+services. However, deployment and maintenance of the stations are expensive. A substantial number of Local Government Units (LGUs), especially in rural areas, do not have installed localized AWS, which is needed for real-time weather information for disaster preparedness and climate resilience.
+Accuracy and Standardization Issues
+
+Low-cost AWS prototypes using microcontrollers show promise in affordability and accessibility. However, challenges persist in calibration, durability, and compliance with World Meteorological Organization (WMO) standards, reducing their acceptance as reliable, long-term monitoring systems.
+Connectivity and Data Accessibility
+
+The majority of AWS designs utilize GSM or internet-based data transmission with many rural areas that face weak or unreliable signal coverage because of the terrain. Other communication protocols like wireless sensor networks or satellite-based links have not seen widespread utilization due to an increase in costs and technical limitations.
+Fragmented Data Integration
+
+Although AWS data is collected, integration into centralized and publicly accessible databases is limited. Cloud-based platforms exist but are not fully utilized for open access, real-time analytics, or LGU decision-making. This fragmentation restricts the broader utility of AWS data for national and local applications.
+Narrow Use Cases
+
+Most AWS projects focus on disaster-related applications such as rainfall monitoring, flooding alerts, or typhoon tracking. Few initiatives extend into other vital areas such as agriculture, energy management, urban planning, or education, where localized weather data could also have transformative impacts.
+Power and Autonomy Concerns
+Many AWS prototypes still rely on grid electricity or small batteries, which reduces resilience during extended outages. While solar-powered and autonomous AWS systems are being explored, research on scalable, long-life designs suitable for remote or off-grid communities remains limited.
+Addressing these gaps is essential to create AWS that are inexpensive and deployable at scale while also producing scientifically rigorous data. The current study aims to address these issues by designing and deploying a low-cost AWS that adheres to international standards for exposure of sensors, incorporates industrial-grade sensors to improve accuracy, and uses Wi-Fi–based communication and cloud data logging. The system also promotes accessibility by offering both an administrative dashboard and public-facing webpage for real-time measurement of weather and heat index, intended for urban–rural climate comparison.
+Synthesis of the Related Literature and Studies
+
+In their study, Muñoz et al. (2018) demonstrated the feasibility of low-cost Arduino-based AWS prototypes for affordable weather monitoring with acceptable accuracy. From the community level, if systems can have acceptable accuracy, they can now be designed with much less capital than the conventional station. Muñoz et al. (2018) pointed out significant issues regarding the accuracy as a result of calibration, stability, and durability. Rivera et al. (2023) proposed a continued advancement on the design of AWS by utilizing common IoT technology and an accessible cloud-based platform to communicate the data, thereby, providing the basis for a potential regional community disaster resilience program.
+Also, there are Government departments such as the Department of the Interior and Local Government (2014), along with non-Government initiatives such as the United Nations Office for Disaster Risk Reduction (DILG), which recognize the importance of AWS in the disaster preparedness process. While AWS will add to the already existing layers of early warning and monitoring, some local government units (LGUs) experience limitations in implementing AWS due to high costs and limited connectivity that improve the community's resilience to disaster, especially the LGUs in rural contexts.
+Beyond disaster monitoring, AWS applications extend to precision agriculture, as discussed by Ioannou (2021), where localized data supports irrigation scheduling, crop modeling, and climate-smart practices. International studies on wireless sensor networks and IoT systems (Lui et al., 2008; Nsabagwa et al., 2018) also show promising approaches to overcoming connectivity challenges, though their adoption in the Philippine setting remains limited.
+Collectively, the examined foundational work highlights that while AWS have affordances in disaster risk reduction and farming, issues related to cost, access, and reliability remain problematic. The latest developments point towards low-cost, IoT-based AWS designs that promote scalability and community-centric design which sets the stage for the methodological framework adopted in the present study.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+CHAPTER 3: METHODOLOGY
+Research Design
+	This study employs a quantitative, experimental, and developmental research design focused on the design, implementation, and evaluation of an IoT- based Automatic Weather Station (AWS) for Bacolor, Pampanga. The research primarily involves the development of a hardware–software system capable of automatically measuring, recording, and transmitting real-time meteorological data, including temperature, humidity, and precipitation.
+The quantitative aspect of the research involves the continuous collection of numerical meteorological data from the deployed AWS over a defined monitoring period. This data will be used to evaluate the system’s performance in terms of accuracy, reliability, and stability. The experimental component focuses on testing and validating the functionality of the AWS, including sensor performance, data transmission reliability, and cloud-based data storage.
+Additionally, a developmental approach is incorporated as the study involves the actual design and construction of the AWS hardware, integration of IoT-based communication modules, development of a web-based dashboard, and establishment of a cloud database for data storage and visualization. Signal processing techniques will be applied to the data collected in order to improve the accuracy of the system. This approach ensures that the final system is not only functional but also cost-effective, scalable, and suitable for deployment by Local Government Units.
+Research Locale/ Setting
+The most critical factor for choosing the sites is to satisfy the criteria of the World Meteorological Organization (WMO) for Fixed Autonomous Weather Stations (AWS). The “Guide to Instruments and Methods of Observation” WMO-No.8 – 2018, Vol. 1 “Measurement of Meteorological Variables”, also known as CIMO Guide (WMO, 2018), defines the four criteria necessary to obtain high-quality measurements:
+    • Use automatic weather stations;
+
+    • Use high-quality sensors;
+
+    • Install the sensors in suitable sites, well-exposed and at a correct height from the ground;
+    • Guarantee a high standard of supervision (maintenance, inspection and calibration of sensors).
+
+
+
+
+
+
+
+Figure 1. Temperature and humidity, criteria for class 2 (WMO, 2018, Annex 1.D), fully compliant
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Figure 2. Example of a weather station layout showing typical distances between the sensors and the fence - CIMO Guide (WMO, 2018)
+
+
+Figures 1 and 2 shows the compliance we aimed to achieve on this project. The deployment site of the Automatic Weather Station (AWS) will be located within the jurisdiction of Bacolor, Pampanga, which has been selected as the study area due to its relevance to local government weather monitoring and disaster preparedness initiatives. The specific location for the installation of the AWS will be determined in close coordination with the Local Government Unit (LGU) of Bacolor, ensuring that the chosen site is accessible, secure, and strategically positioned for effective data collection and monitoring.
+Furthermore, the initial testing and data collection period is scheduled from the last week of January to the last week of April. However, this timeline is subject to adjustments depending on site availability, weather conditions, and coordination with the LGU. This period is considered sufficient to evaluate the AWS’s performance and reliability across different weather conditions, supporting the study’s objectives of delivering accurate and real-time meteorological data for local decision-making.
+Research Instrument
+
+Based on the standard AWS design from WMO-No.8, an AWS is not just a stand-alone equipment. It is a part of a system with three main elements:
+    A. The local AWS and the sensing instruments connected to it;
+
+    B. The local modem or interface to connect the AWS to a telecommunication network
+    C. A central processing system fed by the data transmitted by all the AWS making up the observing network.
+In practice, there exist several categories of AWS (light, basic, extended categories) depending on the variables it measures. In this research, we selected to build a system that aligns with the light configuration to hit the baseline need of the LGU and provide useful information while staying cost-effective.
+	Light	Basic	Extended
+Precipitation	✓	✓	✓
+Air Temperature	✓	✓	✓
+Relative Humidity	✗	✓	✓
+Wind Speed	✗	✓	✓
+Wind Direction	✗	✓	✓
+Atmospheric Pressure	✗	✓	✓
+Solar Radiation	✗	✗	✓
+
+
+Sunshine Duration	✗	✗	✓
+Soil Temperature	✗	✗	✓
+Evaporation	✗	✗	✓
+Cloud-base height	Specific for AWSs with visual observations
+Table #2: AWS Categories according to instruments based on WMO-No.8
+
+Following the standard from WMO, the research instrument is built using the following:
+    A. Local AWS with sensing instruments
+
+        I. Sensors (Basic AWS category)
+
+            1. Precipitation
+
+            2. Air Temperature
+
+            3. Relative Humidity
+
+        II. Power
+
+            1. LiFePo Battery Packs
+
+            2. Battery Management System (BMS)
+
+            3. Solar Panel Arrays
+
+            4. Voltage and Power Regulators
+
+        III. Enclosure
+
+            1. Stevenson Screen
+            2. Sensor Pole
+
+        IV. Local Storage and Timestamping
+
+            1. SD Card and SD Card Reader Module
+
+            2. Real-time Clock Module (RTC)
+
+    B. Interface to telecommunication network
+
+        I. 4G/LTE USB Modem
+
+        II. SIM Card with pre-paid 4G data plan
+
+    C. Central Processing System
+
+        I. Google Firebase
+
+        II. Google Cloud Functions
+
+        III. Hetzner VPS
+
+Data Gathering Procedure
+
+The data gathering procedure for this study is centered on the deployment of an Automatic Weather Station (AWS) designed to autonomously measure, record, and transmit meteorological data in real time. This ensures continuous and accurate environmental monitoring without the need for manual intervention.
+Data Measurement and Logging: The AWS will collect data at intervals ranging from 1 to 10 seconds, depending on sensor calibration and environmental conditions. Each data point will be structured in JSON (JavaScript Object Notation) format, which allows efficient and organized storage, transmission, and retrieval of meteorological readings.
+Data Transmission and Storage: The collected data will be temporarily stored on an on-premises SD card as a local backup to prevent data loss. Simultaneously, the system will batch data into 1-minute intervals and transmit it to a cloud-based NoSQL database, which supports scalability, real-time access, and high-volume time-series data processing. This dual-storage approach ensures data reliability and availability for subsequent analysis.
+System Operation During Data Collection: The AWS will operate in an autonomous mode throughout the data gathering period. Once deployed, it will automatically handle all sensing, recording, logging, and transmission processes without requiring direct human supervision.
+Frequency of Data Collection: Data will be gathered and transmitted in real time, allowing immediate access through the web-based dashboard. This continuous monitoring approach provides comprehensive temporal coverage and enhances the accuracy of environmental assessments.
+Backup and Data Integrity Measures: In the event of network interruptions or system malfunctions, the AWS will continue storing data locally on the SD card. Once connectivity is restored, the system will automatically synchronize any unsent data with the cloud database, preserving the completeness and integrity of the dataset.
+
+Data Analysis
+
+To ensure the reliability based on their specification sheets, the sensors will be tested and calibrated on DOST-R3 (Department of Science and Technology - Regional Office 3). Various tests specific for each sensor will be conducted to ensure that each variable is measured within WMO and DOST-PAGASA standards.
+The model sensor bias and scale will be calculated using
+
+
+To measure the overall error rate, each sensor will have its Mean Absolute Error (MAE) and Root Mean Square Error (RMSE) computed, together with its standard deviation of residuals (precision).
+
+During testing, the device will be tested for reliability by computing the number of errors or unsent packets to the central server. The power system will also be tested
+to ensure continuous operation even if the battery can’t charge using the solar panel array.
+The Packet Delivery Ratio (PDR) and System Availability metrics are computed with:
+
+During deployment and usage, the system will be tested with the LGU to ensure that the data reaches their office in near real-time with favorable consistency.
+
+Ethical Considerations
+
+This study will adhere strictly to ethical research standards throughout the development and deployment of the Automatic Weather Station (AWS). Formal permission and coordination will be sought from the Local Government Unit (LGU) of Bacolor, Pampanga, as well as other relevant authorities, prior to the installation of the AWS. Additionally, necessary approvals from property owners or site managers will be obtained to ensure compliance with institutional policies and local regulations
+
+The AWS will collect only environmental data including temperature, humidity, and precipitation without gathering any personally identifiable information. All data will be securely transmitted and stored to ensure confidentiality and integrity. The project will be conducted with transparency and guided by the principles of respect for property, privacy, safety, and community welfare, ensuring that no harm is caused to individuals, properties, or the environment.

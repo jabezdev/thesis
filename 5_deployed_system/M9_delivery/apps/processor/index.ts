@@ -1,5 +1,5 @@
 import { db, rtdb, getLastProcessedCursor, setLastProcessedCursor } from './firebase';
-import { RawSensorData } from '@panahon/shared';
+import { RawSensorData, applyCalibration, DEFAULT_CALIBRATION } from '@panahon/shared';
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
 
@@ -9,6 +9,8 @@ import { api } from "../../convex/_generated/api";
 
 const RAW_COLLECTIONS = ['node_data_0v3'];
 const NORMALIZED_COLLECTION = 'm6_node_data';
+const DAILY_COLLECTION = 'm6_daily_records';
+const MANILA_TZ = 'Asia/Manila';
 
 // Initialize Convex Client
 // VITE_CONVEX_URL is used locally; CONVEX_URL is the plain name set on the VPS
@@ -19,6 +21,144 @@ const convex = new ConvexHttpClient(convexUrl);
 // Tracks the last processed sample time per node in memory to calculate gaps
 const lastNodeSampleMap: Record<string, number> = {};
 const nodeMetaCache = new Map<string, any>();
+
+function heatIndex(t: number, rh: number): number | null {
+  if (t < 27 || rh < 40) return null;
+  return (
+    -8.78469475556 + 1.61139411 * t + 2.33854883889 * rh
+    - 0.14611605 * t * rh - 0.012308094 * t * t
+    - 0.0164248277778 * rh * rh + 0.002211732 * t * t * rh
+    + 0.00072546 * t * rh * rh - 0.000003582 * t * t * rh * rh
+  );
+}
+
+function manilaDayKey(epoch: number): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: MANILA_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(epoch));
+}
+
+function dayBoundsUtcIso(dayKey: string): { startIso: string; endIso: string } {
+  const start = new Date(`${dayKey}T00:00:00+08:00`);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return { startIso: start.toISOString(), endIso: end.toISOString() };
+}
+
+type MetricAgg = {
+  min: number | null;
+  max: number | null;
+  avg: number | null;
+  count: number;
+  sum: number;
+  min_ts: string | null;
+  max_ts: string | null;
+};
+
+function emptyAgg(): MetricAgg {
+  return { min: null, max: null, avg: null, count: 0, sum: 0, min_ts: null, max_ts: null };
+}
+
+function pushAgg(agg: MetricAgg, value: number | null, ts: string): void {
+  if (value == null || Number.isNaN(value)) return;
+  if (agg.min == null || value < agg.min) {
+    agg.min = value;
+    agg.min_ts = ts;
+  }
+  if (agg.max == null || value > agg.max) {
+    agg.max = value;
+    agg.max_ts = ts;
+  }
+  agg.count += 1;
+  agg.sum += value;
+  agg.avg = agg.sum / agg.count;
+}
+
+async function recomputeDailyRollup(nodeId: string, dayKey: string) {
+  const { startIso, endIso } = dayBoundsUtcIso(dayKey);
+  const snap = await db.collection(NORMALIZED_COLLECTION)
+    .where('ts', '>=', startIso)
+    .where('ts', '<', endIso)
+    .orderBy('ts', 'asc')
+    .limit(20000)
+    .get();
+
+  const calibration = nodeMetaCache.get(nodeId)?.calibration ?? DEFAULT_CALIBRATION;
+  const tempAgg = emptyAgg();
+  const humAgg = emptyAgg();
+  const rainAgg = emptyAgg();
+  const hiAgg = emptyAgg();
+
+  for (const doc of snap.docs) {
+    const d = doc.data() as any;
+    if (d.node_id !== nodeId) continue;
+    if (d.is_placeholder) continue;
+    if (d.temp == null || d.hum == null || d.rain == null || !d.ts) continue;
+
+    const raw: RawSensorData = {
+      ts: d.ts,
+      node_id: d.node_id,
+      uptime_ms: d.uptime_ms ?? 0,
+      temp: d.temp,
+      hum: d.hum,
+      rain: d.rain,
+      batt_v: d.batt_v ?? 0,
+      batt_i: d.batt_i ?? 0,
+      solar_v: d.solar_v ?? 0,
+      solar_i: d.solar_i ?? 0,
+      samples: d.samples ?? 0,
+      processed_at: d.processed_at,
+    };
+
+    const corrected = applyCalibration(raw, calibration);
+    const hi = heatIndex(corrected.temp_corrected, corrected.hum_corrected) ?? corrected.temp_corrected;
+
+    pushAgg(tempAgg, corrected.temp_corrected, d.ts);
+    pushAgg(humAgg, corrected.hum_corrected, d.ts);
+    pushAgg(rainAgg, corrected.rain_corrected, d.ts);
+    pushAgg(hiAgg, hi, d.ts);
+  }
+
+  await db.collection(DAILY_COLLECTION).doc(`${nodeId}_${dayKey}`).set({
+    node_id: nodeId,
+    day_key: dayKey,
+    timezone: MANILA_TZ,
+    day_start_utc: startIso,
+    day_end_utc: new Date(new Date(endIso).getTime() - 1).toISOString(),
+    metrics: {
+      temp_corrected: tempAgg,
+      hum_corrected: humAgg,
+      rain_corrected: rainAgg,
+      hi: hiAgg,
+    },
+    updated_at: new Date().toISOString(),
+  }, { merge: true });
+}
+
+async function recomputeTouchedDailyRollups(nodeId: string, samples: any[]) {
+  const touched = new Set<string>();
+  for (const sample of samples) {
+    const epoch = new Date(sample.ts).getTime();
+    if (!Number.isNaN(epoch)) touched.add(manilaDayKey(epoch));
+  }
+  for (const key of touched) {
+    await recomputeDailyRollup(nodeId, key);
+  }
+}
+
+async function recomputeRecentDailyRollupsForAllNodes(days = 7) {
+  const nodeIds = Array.from(nodeMetaCache.keys());
+  if (!nodeIds.length) return;
+  const dayKeys = Array.from({ length: days }, (_, i) => manilaDayKey(Date.now() - i * 24 * 60 * 60 * 1000));
+
+  for (const nodeId of nodeIds) {
+    for (const dayKey of dayKeys) {
+      await recomputeDailyRollup(nodeId, dayKey);
+    }
+  }
+}
 
 export async function syncConvexMetadata() {
   console.log('[Sync] Fetching node metadata from Convex...');
@@ -62,6 +202,7 @@ async function processBatch(docId: string, data: any) {
 
   // Sort chronologically ascending
   history.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+  const realSamplesForRollup: any[] = [];
 
   let batch = db.batch();
   let opCount = 0;
@@ -134,6 +275,7 @@ async function processBatch(docId: string, data: any) {
     const tsKey = sample.ts.replace(/[: ]/g, '-');
     const docRef = db.collection(NORMALIZED_COLLECTION).doc(`${nodeId}_${tsKey}`);
     batch.set(docRef, { ...sample, node_id: nodeId, processed_at: new Date().toISOString() });
+    realSamplesForRollup.push(sample);
     opCount++;
     await commitBatchIfNeeded();
 
@@ -154,6 +296,12 @@ async function processBatch(docId: string, data: any) {
 
   if (opCount > 0) {
     await batch.commit();
+  }
+
+  // Recompute exact daily rollups for touched days from normalized data.
+  // This keeps aggregates consistent even when processor retries or restarts.
+  if (realSamplesForRollup.length > 0) {
+    await recomputeTouchedDailyRollups(nodeId, realSamplesForRollup);
   }
 
   console.log(`[Processor] Processed ${history.length} raw samples from doc: ${docId}`);
@@ -214,8 +362,12 @@ async function startProcessor() {
 
   // Initial Sync
   await syncConvexMetadata();
+  await recomputeRecentDailyRollupsForAllNodes(7);
   // Periodic Sync every 5 minutes
-  setInterval(syncConvexMetadata, 5 * 60 * 1000);
+  setInterval(async () => {
+    await syncConvexMetadata();
+    await recomputeRecentDailyRollupsForAllNodes(7);
+  }, 5 * 60 * 1000);
 
   try {
     console.log('[Processor] Calling getLastProcessedCursor()...');

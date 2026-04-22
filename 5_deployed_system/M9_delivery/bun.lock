@@ -16,6 +16,7 @@
         "@panahon/shared": "workspace:*",
         "@panahon/ui": "workspace:*",
         "convex": "^1.13.0",
+        "firebase": "^9.0.0",
         "lucide-react": "^0.200.0",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
