@@ -1,7 +1,35 @@
+import { useEffect, useState } from "react";
 import { Card, Button, Badge } from "@panahon/ui";
 import { Settings as SettingsIcon, Database, Terminal, Shield, RefreshCw, Layers } from "lucide-react";
+import { ref, onValue, set } from "firebase/database";
+import { rtdb } from "../firebase";
 
 export default function Settings() {
+   const [fetchDatapointsEnabled, setFetchDatapointsEnabled] = useState(true);
+   const [isSaving, setIsSaving] = useState(false);
+
+   useEffect(() => {
+      const toggleRef = ref(rtdb, "config/lgu/fetch_datapoints_enabled");
+      return onValue(toggleRef, (snapshot) => {
+         if (!snapshot.exists()) {
+            setFetchDatapointsEnabled(true);
+            return;
+         }
+         setFetchDatapointsEnabled(Boolean(snapshot.val()));
+      });
+   }, []);
+
+   const handleToggleDatapointFetch = async () => {
+      const next = !fetchDatapointsEnabled;
+      setIsSaving(true);
+      try {
+         await set(ref(rtdb, "config/lgu/fetch_datapoints_enabled"), next);
+         setFetchDatapointsEnabled(next);
+      } finally {
+         setIsSaving(false);
+      }
+   };
+
   return (
     <div className="flex flex-col gap-8">
       <header>
@@ -53,6 +81,29 @@ export default function Settings() {
                     <div className="w-10 h-5 bg-blue-600 rounded-full relative shadow-lg shadow-blue-500/30">
                        <div className="absolute right-1 top-1 w-3 h-3 bg-white rounded-full transition-all"></div>
                     </div>
+                 </div>
+                 <div className="flex items-center justify-between p-3 hover:bg-slate-50 dark:hover:bg-slate-800/20 rounded-xl transition-all">
+                    <div>
+                       <p className="text-sm font-bold">LGU Datapoint Fetching</p>
+                       <p className="text-[10px] text-slate-500 italic max-w-[220px]">Enable or pause Firestore datapoint queries on the LGU dashboard history page.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleToggleDatapointFetch}
+                      disabled={isSaving}
+                      className={`w-10 h-5 rounded-full relative transition-all disabled:opacity-60 ${
+                        fetchDatapointsEnabled
+                          ? "bg-blue-600 shadow-lg shadow-blue-500/30"
+                          : "bg-slate-200 dark:bg-slate-800"
+                      }`}
+                      aria-label="Toggle LGU datapoint fetching"
+                      title="Toggle LGU datapoint fetching"
+                    >
+                      <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${fetchDatapointsEnabled ? "right-1" : "left-1"}`} />
+                    </button>
+                 </div>
+                 <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-3">
+                   Status: {isSaving ? "Saving..." : fetchDatapointsEnabled ? "Enabled" : "Disabled"}
                  </div>
               </div>
            </Card>

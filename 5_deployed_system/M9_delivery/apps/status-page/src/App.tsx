@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Card, Badge } from '@panahon/ui'
 import { Activity, Wifi, Cpu, Sun, Zap, CloudOff, Radio, Rocket, ListTree, Database } from 'lucide-react'
 import { ref, onValue } from 'firebase/database'
-import { collection, query, orderBy, limit, onSnapshot, documentId } from 'firebase/firestore'
+import { collection, query, orderBy, limit, getDocs, documentId } from 'firebase/firestore'
 import { rtdb } from './firebase'
 import { db } from './firebase'
 import { applyCalibration, type RawSensorData } from '@panahon/shared'
@@ -211,11 +211,14 @@ export default function App() {
     return () => unsubs.forEach(u => u());
   }, [nodeIds]);
 
-  // 3. Listen to startup packets from Firestore and keep latest per node.
+  // 3. Poll startup packets from Firestore and keep latest per node.
   useEffect(() => {
-    const startupQuery = query(collection(db, 'startup_0v3'), orderBy(documentId(), 'desc'), limit(3000));
+    let isAlive = true;
+    const startupQuery = query(collection(db, 'startup_0v3'), orderBy(documentId(), 'desc'), limit(250));
 
-    return onSnapshot(startupQuery, (snapshot) => {
+    const poll = async () => {
+      const snapshot = await getDocs(startupQuery);
+      if (!isAlive) return;
       const latestByNode: Record<string, Record<string, any>> = {};
 
       snapshot.docs.forEach((docSnap) => {
@@ -226,14 +229,24 @@ export default function App() {
       });
 
       setLatestStartupPacket(latestByNode);
-    });
+    };
+
+    poll();
+    const timer = setInterval(poll, 60_000);
+    return () => {
+      isAlive = false;
+      clearInterval(timer);
+    };
   }, []);
 
-  // 4. Listen to heartbeat packets from Firestore and keep latest per node.
+  // 4. Poll heartbeat packets from Firestore and keep latest per node.
   useEffect(() => {
-    const heartbeatQuery = query(collection(db, 'heartbeat_0v3'), orderBy(documentId(), 'desc'), limit(3000));
+    let isAlive = true;
+    const heartbeatQuery = query(collection(db, 'heartbeat_0v3'), orderBy(documentId(), 'desc'), limit(250));
 
-    return onSnapshot(heartbeatQuery, (snapshot) => {
+    const poll = async () => {
+      const snapshot = await getDocs(heartbeatQuery);
+      if (!isAlive) return;
       const latestByNode: Record<string, Record<string, any>> = {};
 
       snapshot.docs.forEach((docSnap) => {
@@ -244,14 +257,24 @@ export default function App() {
       });
 
       setLatestHeartbeatPacket(latestByNode);
-    });
+    };
+
+    poll();
+    const timer = setInterval(poll, 60_000);
+    return () => {
+      isAlive = false;
+      clearInterval(timer);
+    };
   }, []);
 
-  // 5. Listen to latest node_data packets from Firestore and keep latest per node.
+  // 5. Poll latest node_data packets from Firestore and keep latest per node.
   useEffect(() => {
-    const dataQuery = query(collection(db, 'node_data_0v3'), orderBy(documentId(), 'desc'), limit(3000));
+    let isAlive = true;
+    const dataQuery = query(collection(db, 'node_data_0v3'), orderBy(documentId(), 'desc'), limit(250));
 
-    return onSnapshot(dataQuery, (snapshot) => {
+    const poll = async () => {
+      const snapshot = await getDocs(dataQuery);
+      if (!isAlive) return;
       const latestByNode: Record<string, Record<string, any>> = {};
 
       snapshot.docs.forEach((docSnap) => {
@@ -262,7 +285,14 @@ export default function App() {
       });
 
       setLatestTelemetryPacket(latestByNode);
-    });
+    };
+
+    poll();
+    const timer = setInterval(poll, 60_000);
+    return () => {
+      isAlive = false;
+      clearInterval(timer);
+    };
   }, []);
 
   // Global Health Logic

@@ -250,6 +250,8 @@ function App() {
   // ── RTDB latest ────────────────────────────────────────────────────────────
   const [latestData, setLatestData] = useState<ProcessedData | null>(null)
   const [connStatus, setConnStatus] = useState('Connecting…')
+  const [fetchDatapointsEnabled, setFetchDatapointsEnabled] = useState(true)
+  const [fetchToggleLoaded, setFetchToggleLoaded] = useState(false)
 
   // ── Broadcast Modal ────────────────────────────────────────────────────────
   const createAlert = useMutation(api.alerts.create)
@@ -279,6 +281,18 @@ function App() {
       } else setConnStatus('No Data')
     }, () => setConnStatus('Error'))
   }, [selectedNodeId])
+
+  useEffect(() => {
+    return onValue(ref(rtdb, 'config/lgu/fetch_datapoints_enabled'), (snap) => {
+      if (!snap.exists()) {
+        setFetchDatapointsEnabled(true)
+        setFetchToggleLoaded(true)
+        return
+      }
+      setFetchDatapointsEnabled(Boolean(snap.val()))
+      setFetchToggleLoaded(true)
+    })
+  }, [])
 
   // ── RTDB last_hour (true 60-min, using raw data + apply calibration) ────────
   const [hourData, setHourData] = useState<HistPt[]>([])
@@ -330,7 +344,10 @@ function App() {
   })
 
   const fetchHist = useCallback(async (nodeId: string | null, range: { start: string, end: string }) => {
-    if (!nodeId) return
+    if (!nodeId || !fetchDatapointsEnabled) {
+      setHistData([])
+      return
+    }
     setHistLoading(true)
     try {
       const startIso = new Date(range.start).toISOString()
@@ -344,7 +361,7 @@ function App() {
         where('ts', '>=', startIso),
         where('ts', '<=', endIso),
         orderBy('ts', 'asc'),
-        limit(Math.min(diffMins + 60, 10000)), // added slight buffer
+        limit(Math.min(diffMins + 60, 2000)),
       ))
       const rawDocs = snap.docs
         .map(doc => doc.data() as RawSensorData & { node_id: string })
@@ -375,9 +392,17 @@ function App() {
     } finally {
       setHistLoading(false)
     }
-  }, [])
-  // Only fetch automatically when the selected node changes, not when the user is modifying the time range inputs
-  useEffect(() => { fetchHist(selectedNodeId, timeRange) }, [selectedNodeId, fetchHist])
+  }, [fetchDatapointsEnabled])
+
+  // Fetch history only while the history page is active.
+  useEffect(() => {
+    if (!fetchToggleLoaded) return
+    if (page !== 'history' || !fetchDatapointsEnabled) {
+      setHistData([])
+      return
+    }
+    fetchHist(selectedNodeId, timeRange)
+  }, [page, selectedNodeId, fetchDatapointsEnabled, fetchToggleLoaded, fetchHist])
 
   const fetchRecords = useCallback(async (nodeId: string | null) => {
     if (!nodeId) {
@@ -405,7 +430,11 @@ function App() {
     }
   }, [])
 
-  useEffect(() => { fetchRecords(selectedNodeId) }, [selectedNodeId, fetchRecords])
+  // Fetch daily records only when records page is active.
+  useEffect(() => {
+    if (page !== 'records') return
+    fetchRecords(selectedNodeId)
+  }, [page, selectedNodeId, fetchRecords])
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const hi = latestData ? heatIndex(latestData.temp_corrected, latestData.hum_corrected) : null
@@ -785,6 +814,11 @@ function App() {
               <p className="text-sm font-medium text-slate-600 dark:text-slate-400 mt-0.5 truncate">
                 {selectedNode?.name || selectedNodeId} — {histLoading ? 'Loading…' : `${histData.length} records`}
               </p>
+              {!fetchDatapointsEnabled && (
+                <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 mt-1">
+                  Datapoint fetching is disabled by admin.
+                </p>
+              )}
             </div>
             <div className="flex flex-none flex-wrap items-center gap-3 shrink-0 bg-white dark:bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
               <div className="flex items-center gap-2">
@@ -807,7 +841,7 @@ function App() {
               </div>
               <div className="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-1 border-hidden" />
               <div className="flex gap-2">
-                <Button onClick={() => fetchHist(selectedNodeId, timeRange)} variant="outline" className="flex items-center justify-center gap-2 text-xs px-3 py-1.5 h-auto rounded-lg font-bold hover:bg-slate-50 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300">
+                <Button onClick={() => fetchHist(selectedNodeId, timeRange)} disabled={!fetchDatapointsEnabled || histLoading} variant="outline" className="flex items-center justify-center gap-2 text-xs px-3 py-1.5 h-auto rounded-lg font-bold hover:bg-slate-50 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 disabled:opacity-60">
                   <Radio size={13} /> Refresh
                 </Button>
                 <Button onClick={handleExport} disabled={!histData.length} className="flex items-center justify-center gap-2 text-xs px-3 py-1.5 h-auto rounded-lg font-bold bg-slate-800 dark:bg-white text-white dark:text-slate-900 border-transparent hover:bg-slate-900 dark:hover:bg-slate-100">
@@ -827,8 +861,8 @@ function App() {
           {!histLoading && histData.length === 0 && (
             <div className="flex flex-col items-center justify-center py-16 gap-3 text-slate-500 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
               <Activity size={32} className="opacity-30" />
-              <p className="text-sm italic">No records found in the last 24 hours for this station.</p>
-              <p className="text-xs text-slate-400">Check the processor is running and writing to Firestore collection <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">m6_node_data</code></p>
+              <p className="text-sm italic">{fetchDatapointsEnabled ? 'No records found in the last 24 hours for this station.' : 'Datapoint fetching is currently disabled by admin.'}</p>
+              <p className="text-xs text-slate-400">{fetchDatapointsEnabled ? 'Check the processor is running and writing to Firestore collection ' : 'Use the admin console toggle to re-enable fetching from ' }<code className="bg-slate-100 dark:bg-slate-800 px-1 rounded">m6_node_data</code></p>
             </div>
           )}
 

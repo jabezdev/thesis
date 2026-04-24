@@ -184,7 +184,6 @@ The deployment site is located in **Bacolor, Pampanga**. Sites were selected bas
 3.  Suitable, well-exposed sites at correct heights.
 4.  Guaranteed supervision and maintenance.
 
-> [!NOTE]
 > **Figure 1**: WMO Class 2 compliance requirements for temperature and humidity.
 > **Figure 2**: Typical weather station layout showing sensor distances.
 *(Placeholders for actual images)*
