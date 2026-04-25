@@ -62,7 +62,7 @@ function emptyAgg(): MetricAgg {
 }
 
 function pushAgg(agg: MetricAgg, value: number | null, ts: string): void {
-  if (value == null || Number.isNaN(value)) return;
+  if (value == null || !Number.isFinite(value)) return;
   if (agg.min == null || value < agg.min) {
     agg.min = value;
     agg.min_ts = ts;
@@ -74,6 +74,41 @@ function pushAgg(agg: MetricAgg, value: number | null, ts: string): void {
   agg.count += 1;
   agg.sum += value;
   agg.avg = agg.sum / agg.count;
+}
+
+function normalizeAgg(agg: MetricAgg): MetricAgg {
+  const count = Number.isInteger(agg.count) && agg.count > 0 ? agg.count : 0;
+  const min = agg.min != null && Number.isFinite(agg.min) ? agg.min : null;
+  const max = agg.max != null && Number.isFinite(agg.max) ? agg.max : null;
+  const sum = Number.isFinite(agg.sum) ? agg.sum : 0;
+  const avg = count > 0 ? (Number.isFinite(sum / count) ? (sum / count) : null) : null;
+  return {
+    min,
+    max,
+    avg,
+    count,
+    sum,
+    min_ts: agg.min_ts ?? null,
+    max_ts: agg.max_ts ?? null,
+  };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientFirestoreError(err: any): boolean {
+  const code = String(err?.code ?? '').toLowerCase();
+  const msg = String(err?.message ?? '').toLowerCase();
+  return (
+    code === 'aborted' ||
+    code === 'unavailable' ||
+    code === 'deadline-exceeded' ||
+    code === 'resource-exhausted' ||
+    msg.includes('deadline exceeded') ||
+    msg.includes('unavailable') ||
+    msg.includes('resource exhausted')
+  );
 }
 
 async function recomputeDailyRollup(nodeId: string, dayKey: string) {
@@ -121,20 +156,44 @@ async function recomputeDailyRollup(nodeId: string, dayKey: string) {
     pushAgg(hiAgg, hi, d.ts);
   }
 
-  await db.collection(DAILY_COLLECTION).doc(`${nodeId}_${dayKey}`).set({
+  const temp = normalizeAgg(tempAgg);
+  const hum = normalizeAgg(humAgg);
+  const rain = normalizeAgg(rainAgg);
+  const hi = normalizeAgg(hiAgg);
+
+  const payload = {
     node_id: nodeId,
     day_key: dayKey,
     timezone: MANILA_TZ,
     day_start_utc: startIso,
     day_end_utc: new Date(new Date(endIso).getTime() - 1).toISOString(),
     metrics: {
-      temp_corrected: tempAgg,
-      hum_corrected: humAgg,
-      rain_corrected: rainAgg,
-      hi: hiAgg,
+      temp_corrected: temp,
+      hum_corrected: hum,
+      rain_corrected: rain,
+      hi,
     },
     updated_at: new Date().toISOString(),
-  }, { merge: true });
+  };
+
+  const docRef = db.collection(DAILY_COLLECTION).doc(`${nodeId}_${dayKey}`);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await docRef.set(payload, { merge: true });
+      return;
+    } catch (err: any) {
+      const code = err?.code ?? 'unknown';
+      const message = err?.message ?? String(err);
+      const transient = isTransientFirestoreError(err);
+      if (!transient || attempt === 3) {
+        console.error(`[Rollup] Failed write for ${nodeId} ${dayKey} after ${attempt} attempt(s). code=${code}`, message);
+        throw err;
+      }
+      const backoffMs = attempt * 1000;
+      console.warn(`[Rollup] Transient write failure for ${nodeId} ${dayKey}. Retrying in ${backoffMs}ms...`);
+      await sleep(backoffMs);
+    }
+  }
 }
 
 async function recomputeTouchedDailyRollups(nodeId: string, samples: any[]) {
@@ -144,7 +203,11 @@ async function recomputeTouchedDailyRollups(nodeId: string, samples: any[]) {
     if (!Number.isNaN(epoch)) touched.add(manilaDayKey(epoch));
   }
   for (const key of touched) {
-    await recomputeDailyRollup(nodeId, key);
+    try {
+      await recomputeDailyRollup(nodeId, key);
+    } catch (err: any) {
+      console.error(`[Rollup] Skipping failed touched-day rollup for node=${nodeId} day=${key}:`, err?.message ?? err);
+    }
   }
 }
 
@@ -155,7 +218,11 @@ async function recomputeRecentDailyRollupsForAllNodes(days = 7) {
 
   for (const nodeId of nodeIds) {
     for (const dayKey of dayKeys) {
-      await recomputeDailyRollup(nodeId, dayKey);
+      try {
+        await recomputeDailyRollup(nodeId, dayKey);
+      } catch (err: any) {
+        console.error(`[Rollup] Skipping failed recent rollup for node=${nodeId} day=${dayKey}:`, err?.message ?? err);
+      }
     }
   }
 }
@@ -362,11 +429,19 @@ async function startProcessor() {
 
   // Initial Sync
   await syncConvexMetadata();
-  await recomputeRecentDailyRollupsForAllNodes(7);
+  try {
+    await recomputeRecentDailyRollupsForAllNodes(7);
+  } catch (err: any) {
+    console.error('[Rollup] Initial recent rollup pass failed:', err?.message ?? err);
+  }
   // Periodic Sync every 5 minutes
   setInterval(async () => {
-    await syncConvexMetadata();
-    await recomputeRecentDailyRollupsForAllNodes(7);
+    try {
+      await syncConvexMetadata();
+      await recomputeRecentDailyRollupsForAllNodes(7);
+    } catch (err: any) {
+      console.error('[Sync] Periodic sync/recompute failed:', err?.message ?? err);
+    }
   }, 5 * 60 * 1000);
 
   try {
@@ -440,7 +515,12 @@ async function startProcessor() {
     listenerQuery.onSnapshot(async (snap) => {
       for (const change of snap.docChanges()) {
         if (change.type === 'added') {
-          await processBatch(change.doc.id, change.doc.data());
+          try {
+            await processBatch(change.doc.id, change.doc.data());
+          } catch (err: any) {
+            console.error(`[Processor] Failed processing doc ${change.doc.id}:`, err?.message ?? err);
+            continue;
+          }
           const rawTimestamp = change.doc.data().timestamp;
 
           let docTs = 0;
@@ -456,6 +536,8 @@ async function startProcessor() {
           }
         }
       }
+    }, (err) => {
+      console.error(`[Processor] Snapshot listener error for ${collectionName}:`, (err as any)?.message ?? err);
     });
   }
 
