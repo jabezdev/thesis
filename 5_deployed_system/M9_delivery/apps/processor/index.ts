@@ -11,6 +11,7 @@ const RAW_COLLECTIONS = ['node_data_0v3'];
 const NORMALIZED_COLLECTION = 'm6_node_data';
 const DAILY_COLLECTION = 'm6_daily_records';
 const MANILA_TZ = 'Asia/Manila';
+const ENABLE_STARTUP_ROLLUP_RECOMPUTE = process.env.ENABLE_STARTUP_ROLLUP_RECOMPUTE === '1';
 
 // Initialize Convex Client
 // VITE_CONVEX_URL is used locally; CONVEX_URL is the plain name set on the VPS
@@ -74,6 +75,39 @@ function pushAgg(agg: MetricAgg, value: number | null, ts: string): void {
   agg.count += 1;
   agg.sum += value;
   agg.avg = agg.sum / agg.count;
+}
+
+function coerceAgg(input: any): MetricAgg {
+  if (!input || typeof input !== 'object') return emptyAgg();
+  const count = Number.isInteger(input.count) && input.count > 0 ? input.count : 0;
+  const sum = Number.isFinite(input.sum) ? Number(input.sum) : 0;
+  const min = Number.isFinite(input.min) ? Number(input.min) : null;
+  const max = Number.isFinite(input.max) ? Number(input.max) : null;
+  const min_ts = typeof input.min_ts === 'string' ? input.min_ts : null;
+  const max_ts = typeof input.max_ts === 'string' ? input.max_ts : null;
+  const agg: MetricAgg = { min, max, avg: null, count, sum, min_ts, max_ts };
+  agg.avg = agg.count > 0 ? agg.sum / agg.count : null;
+  return normalizeAgg(agg);
+}
+
+function mergeAgg(base: MetricAgg, delta: MetricAgg): MetricAgg {
+  const b = normalizeAgg(base);
+  const d = normalizeAgg(delta);
+  if (d.count === 0) return b;
+  if (b.count === 0) return d;
+
+  const useDeltaMin = b.min == null || (d.min != null && d.min < b.min);
+  const useDeltaMax = b.max == null || (d.max != null && d.max > b.max);
+
+  return normalizeAgg({
+    min: useDeltaMin ? d.min : b.min,
+    max: useDeltaMax ? d.max : b.max,
+    avg: null,
+    count: b.count + d.count,
+    sum: b.sum + d.sum,
+    min_ts: useDeltaMin ? d.min_ts : b.min_ts,
+    max_ts: useDeltaMax ? d.max_ts : b.max_ts,
+  });
 }
 
 function normalizeAgg(agg: MetricAgg): MetricAgg {
@@ -197,14 +231,81 @@ async function recomputeDailyRollup(nodeId: string, dayKey: string) {
 }
 
 async function recomputeTouchedDailyRollups(nodeId: string, samples: any[]) {
-  const touched = new Set<string>();
+  const touchedByDay = new Map<string, any[]>();
   for (const sample of samples) {
     const epoch = new Date(sample.ts).getTime();
-    if (!Number.isNaN(epoch)) touched.add(manilaDayKey(epoch));
+    if (Number.isNaN(epoch)) continue;
+    const key = manilaDayKey(epoch);
+    if (!touchedByDay.has(key)) touchedByDay.set(key, []);
+    touchedByDay.get(key)!.push(sample);
   }
-  for (const key of touched) {
+
+  const todayKey = manilaDayKey(Date.now());
+  const calibration = nodeMetaCache.get(nodeId)?.calibration ?? DEFAULT_CALIBRATION;
+  for (const [key, daySamples] of touchedByDay.entries()) {
+    // Past days are treated as immutable snapshots to avoid repeated read-heavy recomputes.
+    if (key !== todayKey) continue;
+
     try {
-      await recomputeDailyRollup(nodeId, key);
+      const tempDelta = emptyAgg();
+      const humDelta = emptyAgg();
+      const rainDelta = emptyAgg();
+      const hiDelta = emptyAgg();
+
+      for (const sample of daySamples) {
+        if (sample?.temp == null || sample?.hum == null || sample?.rain == null || !sample?.ts) continue;
+        const raw: RawSensorData = {
+          ts: sample.ts,
+          node_id: nodeId,
+          uptime_ms: sample.uptime_ms ?? 0,
+          temp: sample.temp,
+          hum: sample.hum,
+          rain: sample.rain,
+          batt_v: sample.batt_v ?? 0,
+          batt_i: sample.batt_i ?? 0,
+          solar_v: sample.solar_v ?? 0,
+          solar_i: sample.solar_i ?? 0,
+          samples: sample.samples ?? 0,
+          processed_at: sample.processed_at,
+        };
+
+        const corrected = applyCalibration(raw, calibration);
+        const hi = heatIndex(corrected.temp_corrected, corrected.hum_corrected) ?? corrected.temp_corrected;
+
+        pushAgg(tempDelta, corrected.temp_corrected, sample.ts);
+        pushAgg(humDelta, corrected.hum_corrected, sample.ts);
+        pushAgg(rainDelta, corrected.rain_corrected, sample.ts);
+        pushAgg(hiDelta, hi, sample.ts);
+      }
+
+      if (tempDelta.count === 0 && humDelta.count === 0 && rainDelta.count === 0 && hiDelta.count === 0) {
+        continue;
+      }
+
+      const docRef = db.collection(DAILY_COLLECTION).doc(`${nodeId}_${key}`);
+      const existingSnap = await docRef.get();
+      const existingMetrics = (existingSnap.data() as any)?.metrics ?? {};
+
+      const mergedTemp = mergeAgg(coerceAgg(existingMetrics.temp_corrected), tempDelta);
+      const mergedHum = mergeAgg(coerceAgg(existingMetrics.hum_corrected), humDelta);
+      const mergedRain = mergeAgg(coerceAgg(existingMetrics.rain_corrected), rainDelta);
+      const mergedHi = mergeAgg(coerceAgg(existingMetrics.hi), hiDelta);
+      const { startIso, endIso } = dayBoundsUtcIso(key);
+
+      await docRef.set({
+        node_id: nodeId,
+        day_key: key,
+        timezone: MANILA_TZ,
+        day_start_utc: startIso,
+        day_end_utc: new Date(new Date(endIso).getTime() - 1).toISOString(),
+        metrics: {
+          temp_corrected: mergedTemp,
+          hum_corrected: mergedHum,
+          rain_corrected: mergedRain,
+          hi: mergedHi,
+        },
+        updated_at: new Date().toISOString(),
+      }, { merge: true });
     } catch (err: any) {
       console.error(`[Rollup] Skipping failed touched-day rollup for node=${nodeId} day=${key}:`, err?.message ?? err);
     }
@@ -429,16 +530,20 @@ async function startProcessor() {
 
   // Initial Sync
   await syncConvexMetadata();
-  try {
-    await recomputeRecentDailyRollupsForAllNodes(7);
-  } catch (err: any) {
-    console.error('[Rollup] Initial recent rollup pass failed:', err?.message ?? err);
+  if (ENABLE_STARTUP_ROLLUP_RECOMPUTE) {
+    try {
+      await recomputeRecentDailyRollupsForAllNodes(7);
+    } catch (err: any) {
+      console.error('[Rollup] Initial recent rollup pass failed:', err?.message ?? err);
+    }
+  } else {
+    console.log('[Rollup] Startup full recompute disabled (set ENABLE_STARTUP_ROLLUP_RECOMPUTE=1 to enable).');
   }
+
   // Periodic Sync every 5 minutes
   setInterval(async () => {
     try {
       await syncConvexMetadata();
-      await recomputeRecentDailyRollupsForAllNodes(7);
     } catch (err: any) {
       console.error('[Sync] Periodic sync/recompute failed:', err?.message ?? err);
     }
