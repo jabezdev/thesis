@@ -11,6 +11,7 @@
   },
   "scripts": {
     "start": "bun index.ts",
-    "dev": "bun --watch index.ts"
+    "dev": "bun --watch index.ts",
+    "export:raw": "bun export_raw_telemetry_to_csv.mjs"
   }
 }
