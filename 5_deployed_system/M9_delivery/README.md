@@ -28,6 +28,18 @@ M9_delivery/
     └── ui/             # Unified Design System
 ```
 
+## Raw telemetry export and battery analysis
+
+The processor app now includes a raw Firestore export script at
+`apps/processor/export_raw_telemetry_to_csv.mjs`.
+
+It reads the `node_data_0v3` collection, flattens each document's `history[]`
+samples, and writes a CSV to `DATA/raw_telemetry_export.csv`.
+
+For battery analysis, use the Colab-ready Python script at
+`apps/processor/colab_battery_analysis.py`. Copy that script into Google Colab
+after exporting the CSV.
+
 ## Deployment
 
 The system is designed for **VPS Deployment** via **Dokploy**. Each application and the telemetry processor have their own independent Docker lifecycle, allowing for atomic updates and decoupled scaling.

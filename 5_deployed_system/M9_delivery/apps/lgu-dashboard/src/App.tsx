@@ -17,7 +17,7 @@ import {
 import {
   CloudRain, Thermometer, Droplets, Flame,
   Download, AlertTriangle, CheckCircle2, Radio,
-  Activity, Zap, X,
+  Activity, Zap, X, ShieldAlert,
 } from 'lucide-react'
 
 // ── Heat Index ────────────────────────────────────────────────────────────────
@@ -252,6 +252,8 @@ function App() {
   const [connStatus, setConnStatus] = useState('Connecting…')
   const [fetchDatapointsEnabled, setFetchDatapointsEnabled] = useState(true)
   const [fetchToggleLoaded, setFetchToggleLoaded] = useState(false)
+  const [maintenanceModeEnabled, setMaintenanceModeEnabled] = useState(false)
+  const [maintenanceLoaded, setMaintenanceLoaded] = useState(false)
 
   // ── Broadcast Modal ────────────────────────────────────────────────────────
   const createAlert = useMutation(api.alerts.create)
@@ -291,6 +293,18 @@ function App() {
       }
       setFetchDatapointsEnabled(Boolean(snap.val()))
       setFetchToggleLoaded(true)
+    })
+  }, [])
+
+  useEffect(() => {
+    return onValue(ref(rtdb, 'config/system/maintenance_mode'), (snap) => {
+      if (!snap.exists()) {
+        setMaintenanceModeEnabled(false)
+        setMaintenanceLoaded(true)
+        return
+      }
+      setMaintenanceModeEnabled(Boolean(snap.val()))
+      setMaintenanceLoaded(true)
     })
   }, [])
 
@@ -487,6 +501,23 @@ function App() {
     hum_corrected: emptyStats(),
     rain_corrected: emptyStats(),
   }, [recordsByDay])
+
+  if (maintenanceLoaded && maintenanceModeEnabled) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-6 py-10">
+        <div className="max-w-xl w-full bg-slate-900/90 border border-rose-500/30 rounded-3xl shadow-2xl shadow-rose-950/30 p-8 text-center">
+          <div className="mx-auto w-16 h-16 rounded-2xl bg-rose-500/15 border border-rose-400/30 flex items-center justify-center text-rose-300 mb-5">
+            <ShieldAlert size={30} />
+          </div>
+          <p className="text-xs uppercase tracking-[0.28em] text-rose-300 font-black mb-3">System Under Maintenance</p>
+          <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-white">LGU dashboard is temporarily offline.</h1>
+          <p className="mt-4 text-sm sm:text-base text-slate-300 leading-relaxed">
+            The admin team has enabled maintenance mode while updates or repairs are in progress. Live monitoring will resume once the toggle is turned off.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   // ── CSV export ─────────────────────────────────────────────────────────────
   const handleExport = () => {

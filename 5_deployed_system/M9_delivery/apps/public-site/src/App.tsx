@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { ref, onValue } from 'firebase/database'
 import { rtdb } from './firebase'
 import { applyCalibration, DEFAULT_CALIBRATION, type RawSensorData, type ProcessedData } from '@panahon/shared'
-import { CloudRain, Droplets, Thermometer, MapPin, Wifi, WifiOff, Moon, Sun, Flame, Cloud, Info } from 'lucide-react'
+import { CloudRain, Droplets, Thermometer, MapPin, Wifi, WifiOff, Moon, Sun, Flame, Cloud, Info, ShieldAlert } from 'lucide-react'
 
 // ── Heat Index ────────────────────────────────────────────────────────────────
 function heatIndex(t: number, rh: number): number | null {
@@ -39,6 +39,8 @@ function App() {
   const [data, setData] = useState<RawSensorData | null>(null)
   const [meta, setMeta] = useState<any>(null)
   const [showHiInfo, setShowHiInfo] = useState(false)
+  const [maintenanceModeEnabled, setMaintenanceModeEnabled] = useState(false)
+  const [maintenanceLoaded, setMaintenanceLoaded] = useState(false)
 
   const processedData = data ? applyCalibration(data, meta?.calibration ?? DEFAULT_CALIBRATION) : null;
 
@@ -71,7 +73,11 @@ function App() {
   useEffect(() => {
     const u1 = onValue(ref(rtdb, 'nodes/node_1/latest'), s => { if (s.exists()) setData(s.val()) })
     const u2 = onValue(ref(rtdb, 'nodes/node_1/metadata'), s => { if (s.exists()) setMeta(s.val()) })
-    return () => { u1(); u2() }
+    const u3 = onValue(ref(rtdb, 'config/system/maintenance_mode'), s => {
+      setMaintenanceModeEnabled(s.exists() ? Boolean(s.val()) : false)
+      setMaintenanceLoaded(true)
+    })
+    return () => { u1(); u2(); u3() }
   }, [])
 
   const hi = processedData ? heatIndex(processedData.temp_corrected, processedData.hum_corrected) : null
@@ -82,6 +88,23 @@ function App() {
   const updatedAt = processedData
     ? new Date(processedData.ts).toLocaleString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     : null
+
+  if (maintenanceLoaded && maintenanceModeEnabled) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-6 py-10">
+        <div className="max-w-xl w-full bg-slate-900/90 border border-rose-500/30 rounded-3xl shadow-2xl shadow-rose-950/30 p-8 text-center">
+          <div className="mx-auto w-16 h-16 rounded-2xl bg-rose-500/15 border border-rose-400/30 flex items-center justify-center text-rose-300 mb-5">
+            <ShieldAlert size={30} />
+          </div>
+          <p className="text-xs uppercase tracking-[0.28em] text-rose-300 font-black mb-3">System Under Maintenance</p>
+          <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-white">Public weather view is temporarily unavailable.</h1>
+          <p className="mt-4 text-sm sm:text-base text-slate-300 leading-relaxed">
+            The system is currently under maintenance while the admin team performs repairs or updates. Please check back once service is restored.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className={`min-h-screen font-sans bg-gradient-to-br ${cond.lightBg} ${cond.darkBg} text-white transition-all duration-1000 relative overflow-hidden`}>

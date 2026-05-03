@@ -6,6 +6,7 @@ import { rtdb } from "../firebase";
 
 export default function Settings() {
    const [fetchDatapointsEnabled, setFetchDatapointsEnabled] = useState(true);
+   const [maintenanceModeEnabled, setMaintenanceModeEnabled] = useState(false);
    const [isSaving, setIsSaving] = useState(false);
 
    useEffect(() => {
@@ -19,12 +20,34 @@ export default function Settings() {
       });
    }, []);
 
+   useEffect(() => {
+      const maintenanceRef = ref(rtdb, "config/system/maintenance_mode");
+      return onValue(maintenanceRef, (snapshot) => {
+         if (!snapshot.exists()) {
+            setMaintenanceModeEnabled(false);
+            return;
+         }
+         setMaintenanceModeEnabled(Boolean(snapshot.val()));
+      });
+   }, []);
+
    const handleToggleDatapointFetch = async () => {
       const next = !fetchDatapointsEnabled;
       setIsSaving(true);
       try {
          await set(ref(rtdb, "config/lgu/fetch_datapoints_enabled"), next);
          setFetchDatapointsEnabled(next);
+      } finally {
+         setIsSaving(false);
+      }
+   };
+
+   const handleToggleMaintenanceMode = async () => {
+      const next = !maintenanceModeEnabled;
+      setIsSaving(true);
+      try {
+         await set(ref(rtdb, "config/system/maintenance_mode"), next);
+         setMaintenanceModeEnabled(next);
       } finally {
          setIsSaving(false);
       }
@@ -69,9 +92,20 @@ export default function Settings() {
                        <p className="text-sm font-bold">Maintenance Mode</p>
                        <p className="text-[10px] text-slate-500 italic max-w-[200px]">Disable public site visualization while repairing hardware.</p>
                     </div>
-                    <div className="w-10 h-5 bg-slate-200 dark:bg-slate-800 rounded-full relative">
-                       <div className="absolute left-1 top-1 w-3 h-3 bg-white rounded-full transition-all"></div>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={handleToggleMaintenanceMode}
+                      disabled={isSaving}
+                      className={`w-10 h-5 rounded-full relative transition-all disabled:opacity-60 ${
+                        maintenanceModeEnabled
+                          ? "bg-rose-500 shadow-lg shadow-rose-500/30"
+                          : "bg-slate-200 dark:bg-slate-800"
+                      }`}
+                      aria-label="Toggle maintenance mode"
+                      title="Toggle maintenance mode"
+                    >
+                      <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${maintenanceModeEnabled ? "right-1" : "left-1"}`} />
+                    </button>
                  </div>
                  <div className="flex items-center justify-between p-3 hover:bg-slate-50 dark:hover:bg-slate-800/20 rounded-xl transition-all">
                     <div>
@@ -102,9 +136,9 @@ export default function Settings() {
                       <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${fetchDatapointsEnabled ? "right-1" : "left-1"}`} />
                     </button>
                  </div>
-                 <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-3">
-                   Status: {isSaving ? "Saving..." : fetchDatapointsEnabled ? "Enabled" : "Disabled"}
-                 </div>
+                         <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-3">
+                            Status: {isSaving ? "Saving..." : fetchDatapointsEnabled ? "Enabled" : "Disabled"} · Maintenance: {maintenanceModeEnabled ? "On" : "Off"}
+                         </div>
               </div>
            </Card>
         </section>
